@@ -13,7 +13,6 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(cvnode_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
-find_package(std_srvs REQUIRED)
 
 include_directories(include)
 
@@ -25,6 +24,33 @@ if(BUILD_TESTING)
         "include"
         "src"
     )
+
+    ament_clang_tidy(CONFIG_FILE ${CMAKE_CURRENT_SOURCE_DIR}/.clang-format
+        ${CMAKE_BINARY_DIR}/compile_commands.json
+        "include"
+        "src"
+    )
+
 endif()
+
+#############
+
+add_library(cvnode_manager SHARED
+    src/cvnode_manager.cpp
+)
+
+ament_target_dependencies(cvnode_manager
+    "cvnode_msgs"
+    "rclcpp"
+)
+
+#############
+
+install(TARGETS
+    cvnode_manager
+    ARCHIVE DESTINATION lib
+    LIBRARY DESTINATION lib
+    RUNTIME DESTINATION bin
+)
 
 ament_package()
