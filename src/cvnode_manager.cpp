@@ -3,17 +3,23 @@
 namespace cvnode_manager
 {
 
-CVNodeManager::CVNodeManager(const std::string node_name, const std::string &manage_service_name,
-                             const rclcpp::NodeOptions &options)
+using ManageCVNode = kenning_computer_vision_msgs::srv::ManageCVNode;
+using RuntimeProtocolSrv = kenning_computer_vision_msgs::srv::RuntimeProtocolSrv;
+
+CVNodeManager::CVNodeManager(
+    const std::string node_name,
+    const std::string &manage_service_name,
+    const rclcpp::NodeOptions &options)
     : Node(node_name, options)
 {
-    manage_service = create_service<cvnode_msgs::srv::ManageCVNode>(
+    manage_service = create_service<ManageCVNode>(
         manage_service_name,
         std::bind(&CVNodeManager::manage_node_callback, this, std::placeholders::_1, std::placeholders::_2));
 }
 
-void CVNodeManager::manage_node_callback(const cvnode_msgs::srv::ManageCVNode::Request::SharedPtr request,
-                                         cvnode_msgs::srv::ManageCVNode::Response::SharedPtr response)
+void CVNodeManager::manage_node_callback(
+    const ManageCVNode::Request::SharedPtr request,
+    ManageCVNode::Response::SharedPtr response)
 {
     if (request->type == request->REGISTER)
     {
@@ -32,8 +38,9 @@ void CVNodeManager::manage_node_callback(const cvnode_msgs::srv::ManageCVNode::R
     return;
 }
 
-void CVNodeManager::register_node_callback(const cvnode_msgs::srv::ManageCVNode::Request::SharedPtr request,
-                                           cvnode_msgs::srv::ManageCVNode::Response::SharedPtr response)
+void CVNodeManager::register_node_callback(
+    const ManageCVNode::Request::SharedPtr request,
+    ManageCVNode::Response::SharedPtr response)
 {
     std::string node_name = request->node_name;
     RCLCPP_INFO(get_logger(), "Registering the node '%s'", node_name.c_str());
@@ -49,8 +56,8 @@ void CVNodeManager::register_node_callback(const cvnode_msgs::srv::ManageCVNode:
     }
 
     // Create a client to communicate with the node
-    rclcpp::Client<cvnode_msgs::srv::RuntimeProtocolSrv>::SharedPtr cv_node_service;
-    if (!initialize_service_client<cvnode_msgs::srv::RuntimeProtocolSrv>(request->srv_name, cv_node_service))
+    rclcpp::Client<RuntimeProtocolSrv>::SharedPtr cv_node_service;
+    if (!initialize_service_client<RuntimeProtocolSrv>(request->srv_name, cv_node_service))
     {
         response->message = "Could not initialize the communication service client";
         RCLCPP_ERROR(get_logger(), "Could not initialize the communication service client");
@@ -65,8 +72,8 @@ void CVNodeManager::register_node_callback(const cvnode_msgs::srv::ManageCVNode:
 }
 
 void CVNodeManager::unregister_node_callback(
-    const cvnode_msgs::srv::ManageCVNode::Request::SharedPtr request,
-    [[maybe_unused]] cvnode_msgs::srv::ManageCVNode::Response::SharedPtr response)
+    const ManageCVNode::Request::SharedPtr request,
+    [[maybe_unused]] ManageCVNode::Response::SharedPtr response)
 {
     std::string node_name = request->node_name;
 

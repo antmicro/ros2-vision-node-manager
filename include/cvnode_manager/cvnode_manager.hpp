@@ -4,8 +4,8 @@
 #include <string>
 #include <unordered_map>
 
-#include <cvnode_msgs/srv/manage_cv_node.hpp>
-#include <cvnode_msgs/srv/runtime_protocol_srv.hpp>
+#include <kenning_computer_vision_msgs/srv/manage_cv_node.hpp>
+#include <kenning_computer_vision_msgs/srv/runtime_protocol_srv.hpp>
 
 namespace cvnode_manager
 {
@@ -22,8 +22,9 @@ private:
      * @param request Request of the service for registering the node.
      * @param response Response of the service for registering the node.
      */
-    void manage_node_callback(const cvnode_msgs::srv::ManageCVNode::Request::SharedPtr request,
-                              cvnode_msgs::srv::ManageCVNode::Response::SharedPtr response);
+    void manage_node_callback(
+        const kenning_computer_vision_msgs::srv::ManageCVNode::Request::SharedPtr request,
+        kenning_computer_vision_msgs::srv::ManageCVNode::Response::SharedPtr response);
 
     /**
      * Callback for the service to register the BaseCVNode-like nodes.
@@ -31,8 +32,9 @@ private:
      * @param request Request of the service for registering the node.
      * @param response Response of the service for registering the node.
      */
-    void register_node_callback(const cvnode_msgs::srv::ManageCVNode::Request::SharedPtr request,
-                                cvnode_msgs::srv::ManageCVNode::Response::SharedPtr response);
+    void register_node_callback(
+        const kenning_computer_vision_msgs::srv::ManageCVNode::Request::SharedPtr request,
+        kenning_computer_vision_msgs::srv::ManageCVNode::Response::SharedPtr response);
 
     /**
      * Callback for the service to unregister the BaseCVNode-like nodes.
@@ -40,8 +42,9 @@ private:
      * @param request Request of the service for unregistering the node.
      * @param response Response of the service for unregistering the node.
      */
-    void unregister_node_callback(const cvnode_msgs::srv::ManageCVNode::Request::SharedPtr request,
-                                  [[maybe_unused]] cvnode_msgs::srv::ManageCVNode::Response::SharedPtr response);
+    void unregister_node_callback(
+        const kenning_computer_vision_msgs::srv::ManageCVNode::Request::SharedPtr request,
+        [[maybe_unused]] kenning_computer_vision_msgs::srv::ManageCVNode::Response::SharedPtr response);
 
     /**
      * Creates a client to a service.
@@ -73,10 +76,11 @@ private:
     }
 
     /// Service to register the CVNode.
-    rclcpp::Service<cvnode_msgs::srv::ManageCVNode>::SharedPtr manage_service;
+    rclcpp::Service<kenning_computer_vision_msgs::srv::ManageCVNode>::SharedPtr manage_service;
 
     /// Map of registered nodes.
-    std::unordered_map<std::string, rclcpp::Client<cvnode_msgs::srv::RuntimeProtocolSrv>::SharedPtr> cv_nodes;
+    std::unordered_map<std::string, rclcpp::Client<kenning_computer_vision_msgs::srv::RuntimeProtocolSrv>::SharedPtr>
+        cv_nodes;
 
 public:
     /**
@@ -86,8 +90,10 @@ public:
      * @param manage_service_name Name of the service to manage BaseCVNode-like nodes.
      * @param options Node options.
      */
-    CVNodeManager(const std::string node_name, const std::string &manage_service_name,
-                  const rclcpp::NodeOptions &options);
+    CVNodeManager(
+        const std::string node_name,
+        const std::string &manage_service_name,
+        const rclcpp::NodeOptions &options);
 };
 
 } // namespace cvnode_manager
