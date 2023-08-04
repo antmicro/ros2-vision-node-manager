@@ -47,6 +47,16 @@ private:
         [[maybe_unused]] kenning_computer_vision_msgs::srv::ManageCVNode::Response::SharedPtr response);
 
     /**
+     * Callback for communication with dataprovider.
+     *
+     * @param request Dataproviders' request to process.
+     * @param response Response of the service.
+     */
+    void dataprovider_callback(
+        const kenning_computer_vision_msgs::srv::RuntimeProtocolSrv::Request::SharedPtr request,
+        kenning_computer_vision_msgs::srv::RuntimeProtocolSrv::Response::SharedPtr response);
+
+    /**
      * Creates a client to a service.
      *
      * @param service_name Name of the service.
@@ -78,9 +88,14 @@ private:
     /// Service to register the CVNode.
     rclcpp::Service<kenning_computer_vision_msgs::srv::ManageCVNode>::SharedPtr manage_service;
 
+    /// Client to communicate with Kenning.
+    rclcpp::Service<kenning_computer_vision_msgs::srv::RuntimeProtocolSrv>::SharedPtr dataprovider_service;
+
     /// Map of registered nodes.
     std::unordered_map<std::string, rclcpp::Client<kenning_computer_vision_msgs::srv::RuntimeProtocolSrv>::SharedPtr>
         cv_nodes;
+
+    bool dataprovider_initialized = false; ///< Indicates whether the dataprovider is initialized.
 
 public:
     /**

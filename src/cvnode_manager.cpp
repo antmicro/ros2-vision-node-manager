@@ -1,4 +1,5 @@
 #include <cvnode_manager/cvnode_manager.hpp>
+#include <kenning_computer_vision_msgs/runtime_msg_type.hpp>
 
 namespace cvnode_manager
 {
@@ -11,6 +12,42 @@ CVNodeManager::CVNodeManager(const rclcpp::NodeOptions &options) : Node("cvnode_
     manage_service = create_service<ManageCVNode>(
         "node_manager/register",
         std::bind(&CVNodeManager::manage_node_callback, this, std::placeholders::_1, std::placeholders::_2));
+
+    dataprovider_service = create_service<RuntimeProtocolSrv>(
+        "node_manager/dataprovider",
+        std::bind(&CVNodeManager::dataprovider_callback, this, std::placeholders::_1, std::placeholders::_2));
+}
+
+void CVNodeManager::dataprovider_callback(
+    const RuntimeProtocolSrv::Request::SharedPtr request,
+    RuntimeProtocolSrv::Response::SharedPtr response)
+{
+    using namespace kenning_computer_vision_msgs::runtime_message_type;
+    switch (request->request.message_type)
+    {
+    case OK:
+        if (!dataprovider_initialized)
+        {
+            RCLCPP_INFO(get_logger(), "Received DataProvider initialization request");
+            // NYI: Lock here up untill the testing is started
+            response->response.message_type = OK;
+            dataprovider_initialized = true;
+        }
+        break;
+    case ERROR:
+        RCLCPP_ERROR(get_logger(), "Received error message from the dataprovider");
+        break;
+    case MODEL:
+    case IOSPEC:
+        RCLCPP_INFO(get_logger(), "Got 'MODEL' or 'IOSPEC' request. Ignoring...");
+        response->response.message_type = OK;
+        break;
+    default:
+        // NYI: Pass to the testing scenario
+        response->response.message_type = OK;
+        RCLCPP_WARN(get_logger(), "Received unknown message type. Ignoring.");
+        break;
+    }
 }
 
 void CVNodeManager::manage_node_callback(
