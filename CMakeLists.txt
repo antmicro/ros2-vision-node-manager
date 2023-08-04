@@ -3,18 +3,17 @@ project(cvnode_manager)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
+include_directories(include)
+
 find_package(ament_cmake REQUIRED)
 find_package(kenning_computer_vision_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
-
-include_directories(include)
+find_package(rclcpp_components REQUIRED)
 
 if(BUILD_TESTING)
     find_package(ament_cmake_clang_format REQUIRED)
@@ -30,7 +29,6 @@ if(BUILD_TESTING)
         "include"
         "src"
     )
-
 endif()
 
 #############
@@ -42,7 +40,10 @@ add_library(cvnode_manager SHARED
 ament_target_dependencies(cvnode_manager
     "kenning_computer_vision_msgs"
     "rclcpp"
+    "rclcpp_components"
 )
+
+rclcpp_components_register_nodes(cvnode_manager "cvnode_manager::CVNodeManager")
 
 #############
 

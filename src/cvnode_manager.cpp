@@ -6,14 +6,10 @@ namespace cvnode_manager
 using ManageCVNode = kenning_computer_vision_msgs::srv::ManageCVNode;
 using RuntimeProtocolSrv = kenning_computer_vision_msgs::srv::RuntimeProtocolSrv;
 
-CVNodeManager::CVNodeManager(
-    const std::string node_name,
-    const std::string &manage_service_name,
-    const rclcpp::NodeOptions &options)
-    : Node(node_name, options)
+CVNodeManager::CVNodeManager(const rclcpp::NodeOptions &options) : Node("cvnode_manager", options)
 {
     manage_service = create_service<ManageCVNode>(
-        manage_service_name,
+        "node_manager/register",
         std::bind(&CVNodeManager::manage_node_callback, this, std::placeholders::_1, std::placeholders::_2));
 }
 
@@ -93,3 +89,7 @@ void CVNodeManager::unregister_node_callback(
 }
 
 } // namespace cvnode_manager
+
+#include <rclcpp_components/register_node_macro.hpp>
+
+RCLCPP_COMPONENTS_REGISTER_NODE(cvnode_manager::CVNodeManager)

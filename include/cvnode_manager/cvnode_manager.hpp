@@ -86,14 +86,9 @@ public:
     /**
      * Constructor.
      *
-     * @param node_name Name of the node.
-     * @param manage_service_name Name of the service to manage BaseCVNode-like nodes.
      * @param options Node options.
      */
-    CVNodeManager(
-        const std::string node_name,
-        const std::string &manage_service_name,
-        const rclcpp::NodeOptions &options);
+    CVNodeManager(const rclcpp::NodeOptions &options);
 };
 
 } // namespace cvnode_manager
