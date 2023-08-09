@@ -29,8 +29,9 @@ void CVNodeManager::dataprovider_callback(
     case OK:
         if (!dataprovider_initialized)
         {
-            // TODO: Prepare resources and lock up untill inference is started
             input_shape.clear();
+
+            // TODO: Prepare resources and lock up untill inference is started
             RCLCPP_INFO(get_logger(), "Received DataProvider initialization request");
             response->response.message_type = OK;
             dataprovider_initialized = true;
@@ -41,18 +42,27 @@ void CVNodeManager::dataprovider_callback(
         RCLCPP_ERROR(get_logger(), "Received error message from the dataprovider");
         break;
     case MODEL:
-        RCLCPP_INFO(get_logger(), "Got 'MODEL' request. Ignoring...");
-        response->response.message_type = OK;
+        RCLCPP_INFO(get_logger(), "Received model from the dataprovider");
+        response->response.message_type = prepare_nodes();
         break;
     case IOSPEC:
-        response->response.message_type = CVNodeManager::extract_input_spec(request->request.data);
+        RCLCPP_INFO(get_logger(), "Received input spec from the dataprovider");
+        response->response.message_type = extract_input_spec(request->request.data);
         break;
     default:
-        // TODO: Pass to the testing scenario
-        response->response.message_type = OK;
-        RCLCPP_WARN(get_logger(), "Received unknown message type. Ignoring.");
+        if (inference_scenario_func != nullptr)
+        {
+            response->response.message_type = inference_scenario_func(request, response);
+        }
+        else
+        {
+            RCLCPP_ERROR(get_logger(), "Inference scenario function is not initialized");
+            response->response.message_type = ERROR;
+        }
         break;
     }
+    std::string text = "my custom text";
+    response->response.data = std::vector<uint8_t>(text.begin(), text.end());
 }
 
 uint8_t CVNodeManager::extract_input_spec(const std::vector<uint8_t> &iospec_b)
@@ -73,7 +83,45 @@ uint8_t CVNodeManager::extract_input_spec(const std::vector<uint8_t> &iospec_b)
         RCLCPP_ERROR(get_logger(), "Could not extract input spec: %s", e.what());
         return kenning_computer_vision_msgs::runtime_message_type::ERROR;
     }
+
+    std::string input_shape_str = "[";
+    for (auto &dim : input_shape)
+    {
+        input_shape_str += std::to_string(dim) + ", ";
+    }
+    input_shape_str += "]";
+    RCLCPP_INFO(get_logger(), "Extracted input shape: %s", input_shape_str.c_str());
     return kenning_computer_vision_msgs::runtime_message_type::OK;
+}
+
+uint8_t CVNodeManager::prepare_nodes()
+{
+    using namespace kenning_computer_vision_msgs::runtime_message_type;
+    using InferenceCVNodeSrv = kenning_computer_vision_msgs::srv::InferenceCVNodeSrv;
+
+    if (cv_nodes.size() < 1)
+    {
+        RCLCPP_ERROR(get_logger(), "No CV nodes registered");
+        return ERROR;
+    }
+
+    std::shared_ptr<InferenceCVNodeSrv::Request> cv_node_request = std::make_shared<InferenceCVNodeSrv::Request>();
+    cv_node_request->message_type = MODEL;
+    for (auto &cv_node : cv_nodes)
+    {
+        auto cv_node_response = cv_node.second->async_send_request(cv_node_request);
+        if (cv_node_response.wait_for(std::chrono::seconds(5)) == std::future_status::ready)
+        {
+            if (cv_node_response.get()->message_type == OK)
+            {
+                continue;
+            }
+        }
+        RCLCPP_ERROR(get_logger(), "Node '%s' is not ready. Aborting", cv_node.first.c_str());
+        return ERROR;
+    }
+    RCLCPP_INFO(get_logger(), "All CV nodes are prepared");
+    return OK;
 }
 
 void CVNodeManager::manage_node_callback(
@@ -114,9 +162,10 @@ void CVNodeManager::register_node_callback(
         return;
     }
 
+    using InferenceCVNodeSrv = kenning_computer_vision_msgs::srv::InferenceCVNodeSrv;
     // Create a client to communicate with the node
-    rclcpp::Client<RuntimeProtocolSrv>::SharedPtr cv_node_service;
-    if (!initialize_service_client<RuntimeProtocolSrv>(request->srv_name, cv_node_service))
+    rclcpp::Client<InferenceCVNodeSrv>::SharedPtr cv_node_service;
+    if (!initialize_service_client<InferenceCVNodeSrv>(request->srv_name, cv_node_service))
     {
         response->message = "Could not initialize the communication service client";
         RCLCPP_ERROR(get_logger(), "Could not initialize the communication service client");

@@ -4,6 +4,7 @@
 #include <string>
 #include <unordered_map>
 
+#include <kenning_computer_vision_msgs/srv/inference_cv_node_srv.hpp>
 #include <kenning_computer_vision_msgs/srv/manage_cv_node.hpp>
 #include <kenning_computer_vision_msgs/srv/runtime_protocol_srv.hpp>
 
@@ -66,6 +67,13 @@ private:
     uint8_t extract_input_spec(const std::vector<uint8_t> &iospec_b);
 
     /**
+     * Prepares all the registered CVNode-like nodes.
+     *
+     * @return Status indicating successful preparation or ERROR otherwise.
+     */
+    uint8_t prepare_nodes();
+
+    /**
      * Creates a client to a service.
      *
      * @param service_name Name of the service.
@@ -101,8 +109,14 @@ private:
     rclcpp::Service<kenning_computer_vision_msgs::srv::RuntimeProtocolSrv>::SharedPtr dataprovider_service;
 
     /// Map of registered nodes
-    std::unordered_map<std::string, rclcpp::Client<kenning_computer_vision_msgs::srv::RuntimeProtocolSrv>::SharedPtr>
+    std::unordered_map<std::string, rclcpp::Client<kenning_computer_vision_msgs::srv::InferenceCVNodeSrv>::SharedPtr>
         cv_nodes;
+
+    /// Testing scenario
+    std::function<uint8_t(
+        kenning_computer_vision_msgs::srv::RuntimeProtocolSrv::Request::SharedPtr,
+        kenning_computer_vision_msgs::srv::RuntimeProtocolSrv::Response::SharedPtr)>
+        inference_scenario_func = nullptr;
 
     bool dataprovider_initialized = false; ///< Indicates whether the dataprovider is initialized
     std::vector<int> input_shape;          ///< Input specification of dataprovider
