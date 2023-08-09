@@ -57,6 +57,15 @@ private:
         kenning_computer_vision_msgs::srv::RuntimeProtocolSrv::Response::SharedPtr response);
 
     /**
+     * Parses IO specification and saves it for further images processing.
+     *
+     * @param iospec_b IO specification in bytes.
+     *
+     * @return Status indicating OK if the specification was parsed successfully.
+     */
+    uint8_t extract_input_spec(const std::vector<uint8_t> &iospec_b);
+
+    /**
      * Creates a client to a service.
      *
      * @param service_name Name of the service.
@@ -85,17 +94,18 @@ private:
         return true;
     }
 
-    /// Service to register the CVNode.
+    /// Service to register the CVNode
     rclcpp::Service<kenning_computer_vision_msgs::srv::ManageCVNode>::SharedPtr manage_service;
 
-    /// Client to communicate with Kenning.
+    /// Client to communicate with Kenning
     rclcpp::Service<kenning_computer_vision_msgs::srv::RuntimeProtocolSrv>::SharedPtr dataprovider_service;
 
-    /// Map of registered nodes.
+    /// Map of registered nodes
     std::unordered_map<std::string, rclcpp::Client<kenning_computer_vision_msgs::srv::RuntimeProtocolSrv>::SharedPtr>
         cv_nodes;
 
-    bool dataprovider_initialized = false; ///< Indicates whether the dataprovider is initialized.
+    bool dataprovider_initialized = false; ///< Indicates whether the dataprovider is initialized
+    std::vector<int> input_shape;          ///< Input specification of dataprovider
 
 public:
     /**

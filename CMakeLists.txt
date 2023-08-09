@@ -31,6 +31,16 @@ if(BUILD_TESTING)
     )
 endif()
 
+if(NOT nlohmann_json_FOUND)
+    message("nlohmann_json not found - building it")
+    include(FetchContent)
+    FetchContent_Declare(nlohmann_json
+        GIT_REPOSITORY https://github.com/nlohmann/json
+        GIT_TAG v3.11.2
+    )
+    FetchContent_MakeAvailable(nlohmann_json)
+endif()
+
 #############
 
 add_library(cvnode_manager SHARED
@@ -44,6 +54,10 @@ ament_target_dependencies(cvnode_manager
 )
 
 rclcpp_components_register_nodes(cvnode_manager "cvnode_manager::CVNodeManager")
+
+target_link_libraries(cvnode_manager
+    nlohmann_json::nlohmann_json
+)
 
 #############
 

@@ -1,5 +1,6 @@
 #include <cvnode_manager/cvnode_manager.hpp>
 #include <kenning_computer_vision_msgs/runtime_msg_type.hpp>
+#include <nlohmann/json.hpp>
 
 namespace cvnode_manager
 {
@@ -28,26 +29,51 @@ void CVNodeManager::dataprovider_callback(
     case OK:
         if (!dataprovider_initialized)
         {
+            // TODO: Prepare resources and lock up untill inference is started
+            input_shape.clear();
             RCLCPP_INFO(get_logger(), "Received DataProvider initialization request");
-            // NYI: Lock here up untill the testing is started
             response->response.message_type = OK;
             dataprovider_initialized = true;
         }
         break;
     case ERROR:
+        // TODO: Abort further procecssing
         RCLCPP_ERROR(get_logger(), "Received error message from the dataprovider");
         break;
     case MODEL:
-    case IOSPEC:
-        RCLCPP_INFO(get_logger(), "Got 'MODEL' or 'IOSPEC' request. Ignoring...");
+        RCLCPP_INFO(get_logger(), "Got 'MODEL' request. Ignoring...");
         response->response.message_type = OK;
         break;
+    case IOSPEC:
+        response->response.message_type = CVNodeManager::extract_input_spec(request->request.data);
+        break;
     default:
-        // NYI: Pass to the testing scenario
+        // TODO: Pass to the testing scenario
         response->response.message_type = OK;
         RCLCPP_WARN(get_logger(), "Received unknown message type. Ignoring.");
         break;
     }
+}
+
+uint8_t CVNodeManager::extract_input_spec(const std::vector<uint8_t> &iospec_b)
+{
+    try
+    {
+        nlohmann::json iospec_j = nlohmann::json::parse(std::string(iospec_b.begin(), iospec_b.end()));
+        std::vector<nlohmann::json> input_spec = iospec_j.at("input");
+        if (input_spec.size() != 1)
+        {
+            RCLCPP_ERROR(get_logger(), "Input spec length is not 1");
+            return kenning_computer_vision_msgs::runtime_message_type::ERROR;
+        }
+        input_shape = input_spec.at(0).at("shape").get<std::vector<int>>();
+    }
+    catch (nlohmann::json::exception &e)
+    {
+        RCLCPP_ERROR(get_logger(), "Could not extract input spec: %s", e.what());
+        return kenning_computer_vision_msgs::runtime_message_type::ERROR;
+    }
+    return kenning_computer_vision_msgs::runtime_message_type::OK;
 }
 
 void CVNodeManager::manage_node_callback(
