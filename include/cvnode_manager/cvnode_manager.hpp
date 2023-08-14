@@ -62,14 +62,14 @@ private:
         const std::shared_ptr<kenning_computer_vision_msgs::srv::RuntimeProtocolSrv::Request> request);
 
     /**
-     * Parses IO specification and saves it for further images processing.
+     * Extracts input data from bytes-encoded.
      *
-     * @param header Header of the service request.
-     * @param request Request of the service.
+     * @param input_data_b Bytes-encoded input data.
+     *
+     * @return request Request with data to distribute. If error occured, message type is set to ERROR.
      */
-    void extract_input_spec(
-        const std::shared_ptr<rmw_request_id_t> header,
-        const std::shared_ptr<kenning_computer_vision_msgs::srv::RuntimeProtocolSrv::Request> request);
+    kenning_computer_vision_msgs::srv::InferenceCVNodeSrv::Request::SharedPtr
+    extract_images(std::vector<uint8_t> &input_data_b);
 
     /**
      * Prepares all the registered CVNode-like nodes.
@@ -77,6 +77,36 @@ private:
      * @param header Header of the service request.
      */
     void prepare_nodes(const std::shared_ptr<rmw_request_id_t> header);
+
+    /**
+     * Sends data from request to all the registered CVNode-like nodes.
+     *
+     * @param header Header of the service request.
+     * @param request Request of the service along with attached data.
+     */
+    void broadcast_data(
+        const std::shared_ptr<rmw_request_id_t> header,
+        const std::shared_ptr<kenning_computer_vision_msgs::srv::RuntimeProtocolSrv::Request> request);
+
+    /**
+     * Synthetic testing scenario.
+     *
+     * @param header Header of the service request.
+     * @param request Request of the service.
+     */
+    void synthetic_scenario(
+        const std::shared_ptr<rmw_request_id_t> header,
+        const std::shared_ptr<kenning_computer_vision_msgs::srv::RuntimeProtocolSrv::Request> request);
+
+    /**
+     * Asynchronous callback for receiving confirmation from the CVNode-like nodes.
+     *
+     * @param future Future of the service response.
+     * @param header Header of the service request.
+     */
+    void async_receive_confirmation(
+        rclcpp::Client<kenning_computer_vision_msgs::srv::InferenceCVNodeSrv>::SharedFuture future,
+        const std::shared_ptr<rmw_request_id_t> header);
 
     /**
      * Creates a client to a service.
@@ -118,13 +148,11 @@ private:
         cv_nodes;
 
     /// Testing scenario function
-    std::function<void(
+    void (CVNodeManager::*inference_scenario_func)(
         const std::shared_ptr<rmw_request_id_t>,
-        const kenning_computer_vision_msgs::srv::RuntimeProtocolSrv::Request::SharedPtr)>
-        inference_scenario_func = nullptr;
+        const std::shared_ptr<kenning_computer_vision_msgs::srv::RuntimeProtocolSrv::Request>) = nullptr;
 
     bool dataprovider_initialized = false; ///< Indicates whether the dataprovider is initialized
-    std::vector<int> input_shape;          ///< Input specification of dataprovider
     int answer_counter = 0;                ///< Counter of received answers from the CVNodes
 
 public:

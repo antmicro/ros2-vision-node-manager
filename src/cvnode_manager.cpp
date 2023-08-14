@@ -5,6 +5,7 @@
 #include <cvnode_manager/cvnode_manager.hpp>
 #include <kenning_computer_vision_msgs/runtime_msg_type.hpp>
 #include <nlohmann/json.hpp>
+#include <sensor_msgs/msg/image.hpp>
 
 namespace cvnode_manager
 {
@@ -36,8 +37,6 @@ void CVNodeManager::dataprovider_callback(
     case OK:
         if (!dataprovider_initialized)
         {
-            input_shape.clear();
-
             // TODO: Prepare resources and lock up untill inference is started
             RCLCPP_DEBUG(get_logger(), "Received DataProvider initialization request");
             dataprovider_initialized = true;
@@ -60,12 +59,14 @@ void CVNodeManager::dataprovider_callback(
         prepare_nodes(header);
         break;
     case IOSPEC:
-        extract_input_spec(header, request);
+        // IGNORE
+        response.response.message_type = OK;
+        dataprovider_service->send_response(*header, response);
         break;
     default:
         if (inference_scenario_func != nullptr)
         {
-            inference_scenario_func(header, request);
+            (this->*inference_scenario_func)(header, request);
         }
         else
         {
@@ -78,46 +79,104 @@ void CVNodeManager::dataprovider_callback(
     }
 }
 
-void CVNodeManager::extract_input_spec(
+void CVNodeManager::synthetic_scenario(
     const std::shared_ptr<rmw_request_id_t> header,
     const std::shared_ptr<RuntimeProtocolSrv::Request> request)
 {
     RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
+    switch (request->request.message_type)
+    {
+    case DATA:
+        broadcast_data(header, request);
+        break;
+    case PROCESS:
+        // TODO: Implement
+        RCLCPP_ERROR(get_logger(), "Not yet implemented. Aborting.");
+        response.response.message_type = ERROR;
+        dataprovider_service->send_response(*header, response);
+        break;
+    case OUTPUT:
+        // TODO: Implement
+        RCLCPP_ERROR(get_logger(), "Not yet implemented. Aborting.");
+        response.response.message_type = ERROR;
+        dataprovider_service->send_response(*header, response);
+        break;
+    case STATS:
+        // TODO: Implement
+        RCLCPP_ERROR(get_logger(), "Not yet implemented. Aborting.");
+        response.response.message_type = ERROR;
+        dataprovider_service->send_response(*header, response);
+        break;
+    default:
+        // TODO: Abort further processing
+        RCLCPP_ERROR(get_logger(), "Unsupported message type. Aborting.");
+        response.response.message_type = ERROR;
+        dataprovider_service->send_response(*header, response);
+        break;
+    }
+}
+
+void CVNodeManager::broadcast_data(
+    const std::shared_ptr<rmw_request_id_t> header,
+    const std::shared_ptr<RuntimeProtocolSrv::Request> request)
+{
+    InferenceCVNodeSrv::Request::SharedPtr data_request = extract_images(request->request.data);
+    if (data_request->message_type == ERROR)
+    {
+        // TODO: Abort further processing
+        RCLCPP_DEBUG(get_logger(), "Error while extracting data. Aborting.");
+        RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
+        response.response.message_type = ERROR;
+        dataprovider_service->send_response(*header, response);
+    }
+    answer_counter = 0;
+    for (auto &cv_node : cv_nodes)
+    {
+        cv_node.second->async_send_request(
+            data_request,
+            [this, header, &cv_node](rclcpp::Client<InferenceCVNodeSrv>::SharedFuture future)
+            {
+                RCLCPP_DEBUG(get_logger(), "[DATA] Received response from the %s node", cv_node.first.c_str());
+                async_receive_confirmation(future, header);
+            });
+    }
+}
+
+InferenceCVNodeSrv::Request::SharedPtr CVNodeManager::extract_images(std::vector<uint8_t> &input_data_b)
+{
+    InferenceCVNodeSrv::Request::SharedPtr request = std::make_shared<InferenceCVNodeSrv::Request>();
+
     try
     {
-        nlohmann::json iospec_j =
-            nlohmann::json::parse(std::string(request->request.data.begin(), request->request.data.end()));
-        std::vector<nlohmann::json> input_spec = iospec_j.at("input");
-        if (input_spec.size() != 1)
+        nlohmann::json data_j = nlohmann::json::parse(std::string(input_data_b.begin(), input_data_b.end()));
+        std::vector<nlohmann::json> data = data_j.at("data");
+        if (data.size() == 0)
         {
             // TODO: Abort further processing
-            RCLCPP_ERROR(get_logger(), "Input spec length is not 1");
-            response.response.message_type = ERROR;
-            dataprovider_service->send_response(*header, response);
-            return;
+            RCLCPP_ERROR(get_logger(), "Data is empty");
+            request->message_type = ERROR;
+            return request;
         }
-        input_shape = input_spec.at(0).at("shape").get<std::vector<int>>();
+        for (auto &image : data)
+        {
+            sensor_msgs::msg::Image img;
+            img.height = image.at("height");
+            img.width = image.at("width");
+            img.encoding = "bgr8";
+            img.data = image.at("data").get<std::vector<uint8_t>>();
+            img.step = img.width * 3;
+            request->input.push_back(img);
+        }
     }
     catch (nlohmann::json::exception &e)
     {
         // TODO: Abort further processing
-        RCLCPP_ERROR(get_logger(), "Could not extract input spec: %s", e.what());
-        response.response.message_type = ERROR;
-        dataprovider_service->send_response(*header, response);
-        return;
+        RCLCPP_ERROR(get_logger(), "Error while parsing data json: %s", e.what());
+        request->message_type = ERROR;
+        return request;
     }
-
-    std::string input_shape_str = "[";
-    for (auto &dim : input_shape)
-    {
-        input_shape_str += std::to_string(dim) + ", ";
-    }
-    input_shape_str += "]";
-    RCLCPP_DEBUG(get_logger(), "Extracted input shape: %s", input_shape_str.c_str());
-
-    response.response.message_type = OK;
-    dataprovider_service->send_response(*header, response);
-    return;
+    request->message_type = DATA;
+    return request;
 }
 
 void CVNodeManager::prepare_nodes(const std::shared_ptr<rmw_request_id_t> header)
@@ -140,41 +199,48 @@ void CVNodeManager::prepare_nodes(const std::shared_ptr<rmw_request_id_t> header
             cv_node_request,
             [this, header, &cv_node](rclcpp::Client<InferenceCVNodeSrv>::SharedFuture future)
             {
-                RCLCPP_DEBUG(get_logger(), "Received response from the %s node", cv_node.first.c_str());
-                if (answer_counter < 0)
-                {
-                    return;
-                }
-                answer_counter++;
-                auto response = future.get();
-                RuntimeProtocolSrv::Response dataprovider_response;
-                switch (response->message_type)
-                {
-                case OK:
-                    if (static_cast<int>(cv_nodes.size()) == answer_counter)
-                    {
-                        RCLCPP_DEBUG(get_logger(), "All CV nodes are prepared (%d)", answer_counter);
-                        dataprovider_response.response.message_type = OK;
-                        dataprovider_service->send_response(*header, dataprovider_response);
-                        answer_counter = 0;
-                    }
-                    break;
-                case ERROR:
-                    RCLCPP_ERROR(get_logger(), "Could not send model to the CV node");
-                    dataprovider_response.response.message_type = ERROR;
-                    dataprovider_service->send_response(*header, dataprovider_response);
-                    answer_counter = -1;
-                    break;
-                default:
-                    RCLCPP_ERROR(get_logger(), "Unknown response from the CV node");
-                    dataprovider_response.response.message_type = ERROR;
-                    dataprovider_service->send_response(*header, dataprovider_response);
-                    answer_counter = -1;
-                    break;
-                }
+                RCLCPP_DEBUG(get_logger(), "[MODEL] Received response from the %s node", cv_node.first.c_str());
+                async_receive_confirmation(future, header);
             });
     }
     RCLCPP_DEBUG(get_logger(), "Sent preparation request to the CV nodes");
+}
+
+void CVNodeManager::async_receive_confirmation(
+    rclcpp::Client<InferenceCVNodeSrv>::SharedFuture future,
+    const std::shared_ptr<rmw_request_id_t> header)
+{
+    if (answer_counter < 0)
+    {
+        return;
+    }
+    answer_counter++;
+    auto response = future.get();
+    RuntimeProtocolSrv::Response dataprovider_response;
+    switch (response->message_type)
+    {
+    case OK:
+        if (static_cast<int>(cv_nodes.size()) == answer_counter)
+        {
+            RCLCPP_DEBUG(get_logger(), "Received confirmation from all CV nodes");
+            dataprovider_response.response.message_type = OK;
+            dataprovider_service->send_response(*header, dataprovider_response);
+            answer_counter = 0;
+        }
+        break;
+    case ERROR:
+        RCLCPP_ERROR(get_logger(), "Failed to receive confirmation from the CV node");
+        dataprovider_response.response.message_type = ERROR;
+        dataprovider_service->send_response(*header, dataprovider_response);
+        answer_counter = -1;
+        break;
+    default:
+        RCLCPP_ERROR(get_logger(), "Unknown response from the CV node");
+        dataprovider_response.response.message_type = ERROR;
+        dataprovider_service->send_response(*header, dataprovider_response);
+        answer_counter = -1;
+        break;
+    }
 }
 
 void CVNodeManager::manage_node_callback(
