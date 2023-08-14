@@ -4,7 +4,9 @@
 
 namespace cvnode_manager
 {
+using namespace kenning_computer_vision_msgs::runtime_message_type;
 
+using InferenceCVNodeSrv = kenning_computer_vision_msgs::srv::InferenceCVNodeSrv;
 using ManageCVNode = kenning_computer_vision_msgs::srv::ManageCVNode;
 using RuntimeProtocolSrv = kenning_computer_vision_msgs::srv::RuntimeProtocolSrv;
 
@@ -21,11 +23,9 @@ CVNodeManager::CVNodeManager(const rclcpp::NodeOptions &options) : Node("cvnode_
 
 void CVNodeManager::dataprovider_callback(
     const std::shared_ptr<rmw_request_id_t> header,
-    const std::shared_ptr<kenning_computer_vision_msgs::srv::RuntimeProtocolSrv::Request> request)
+    const std::shared_ptr<RuntimeProtocolSrv::Request> request)
 {
 
-    using namespace kenning_computer_vision_msgs::runtime_message_type;
-    using RuntimeProtocolSrv = kenning_computer_vision_msgs::srv::RuntimeProtocolSrv;
     RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
     switch (request->request.message_type)
     {
@@ -35,13 +35,19 @@ void CVNodeManager::dataprovider_callback(
             input_shape.clear();
 
             // TODO: Prepare resources and lock up untill inference is started
-            RCLCPP_INFO(get_logger(), "Received DataProvider initialization request");
-            response.response.message_type = OK;
+            RCLCPP_DEBUG(get_logger(), "Received DataProvider initialization request");
             dataprovider_initialized = true;
-            dataprovider_service->send_response(*header, response);
+            response.response.message_type = OK;
         }
+        else
+        {
+            RCLCPP_DEBUG(get_logger(), "Received unexpected 'OK' message. Responding with error.");
+            response.response.message_type = ERROR;
+        }
+        dataprovider_service->send_response(*header, response);
         break;
     case ERROR:
+        // TODO: Abort further processing
         RCLCPP_ERROR(get_logger(), "Received error message from the dataprovider");
         response.response.message_type = ERROR;
         dataprovider_service->send_response(*header, response);
@@ -59,6 +65,7 @@ void CVNodeManager::dataprovider_callback(
         }
         else
         {
+            // TODO: Abort further processing
             RCLCPP_ERROR(get_logger(), "Inference scenario function is not initialized");
             response.response.message_type = ERROR;
             dataprovider_service->send_response(*header, response);
@@ -69,9 +76,8 @@ void CVNodeManager::dataprovider_callback(
 
 void CVNodeManager::extract_input_spec(
     const std::shared_ptr<rmw_request_id_t> header,
-    const std::shared_ptr<kenning_computer_vision_msgs::srv::RuntimeProtocolSrv::Request> request)
+    const std::shared_ptr<RuntimeProtocolSrv::Request> request)
 {
-    using namespace kenning_computer_vision_msgs::runtime_message_type;
     RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
     try
     {
@@ -80,6 +86,7 @@ void CVNodeManager::extract_input_spec(
         std::vector<nlohmann::json> input_spec = iospec_j.at("input");
         if (input_spec.size() != 1)
         {
+            // TODO: Abort further processing
             RCLCPP_ERROR(get_logger(), "Input spec length is not 1");
             response.response.message_type = ERROR;
             dataprovider_service->send_response(*header, response);
@@ -89,6 +96,7 @@ void CVNodeManager::extract_input_spec(
     }
     catch (nlohmann::json::exception &e)
     {
+        // TODO: Abort further processing
         RCLCPP_ERROR(get_logger(), "Could not extract input spec: %s", e.what());
         response.response.message_type = ERROR;
         dataprovider_service->send_response(*header, response);
@@ -110,12 +118,10 @@ void CVNodeManager::extract_input_spec(
 
 void CVNodeManager::prepare_nodes(const std::shared_ptr<rmw_request_id_t> header)
 {
-    using namespace kenning_computer_vision_msgs::runtime_message_type;
-    using InferenceCVNodeSrv = kenning_computer_vision_msgs::srv::InferenceCVNodeSrv;
-
-    kenning_computer_vision_msgs::srv::RuntimeProtocolSrv::Response response;
+    RuntimeProtocolSrv::Response response;
     if (cv_nodes.size() < 1)
     {
+        // TODO: Reset node here
         RCLCPP_ERROR(get_logger(), "No CV nodes registered");
         response.response.message_type = ERROR;
         dataprovider_service->send_response(*header, response);
@@ -135,13 +141,9 @@ void CVNodeManager::prepare_nodes(const std::shared_ptr<rmw_request_id_t> header
                 {
                     return;
                 }
-                else
-                {
-                    answer_counter++;
-                }
-
+                answer_counter++;
                 auto response = future.get();
-                kenning_computer_vision_msgs::srv::RuntimeProtocolSrv::Response dataprovider_response;
+                RuntimeProtocolSrv::Response dataprovider_response;
                 switch (response->message_type)
                 {
                 case OK:
@@ -150,6 +152,7 @@ void CVNodeManager::prepare_nodes(const std::shared_ptr<rmw_request_id_t> header
                         RCLCPP_DEBUG(get_logger(), "All CV nodes are prepared (%d)", answer_counter);
                         dataprovider_response.response.message_type = OK;
                         dataprovider_service->send_response(*header, dataprovider_response);
+                        answer_counter = 0;
                     }
                     break;
                 case ERROR:
@@ -196,9 +199,11 @@ void CVNodeManager::register_node_callback(
     ManageCVNode::Response::SharedPtr response)
 {
     std::string node_name = request->node_name;
-    RCLCPP_INFO(get_logger(), "Registering the node '%s'", node_name.c_str());
+    RCLCPP_DEBUG(get_logger(), "Registering the node '%s'", node_name.c_str());
 
     response->status = false;
+
+    // TODO: Abort if inference testing already started
 
     // Check if the node is already registered
     if (cv_nodes.find(node_name) != cv_nodes.end())
@@ -208,7 +213,6 @@ void CVNodeManager::register_node_callback(
         return;
     }
 
-    using InferenceCVNodeSrv = kenning_computer_vision_msgs::srv::InferenceCVNodeSrv;
     // Create a client to communicate with the node
     rclcpp::Client<InferenceCVNodeSrv>::SharedPtr cv_node_service;
     if (!initialize_service_client<InferenceCVNodeSrv>(request->srv_name, cv_node_service))
@@ -222,7 +226,7 @@ void CVNodeManager::register_node_callback(
     response->message = "The node is registered";
     cv_nodes[node_name] = cv_node_service;
 
-    RCLCPP_INFO(get_logger(), "The node '%s' is registered", node_name.c_str());
+    RCLCPP_DEBUG(get_logger(), "The node '%s' is registered", node_name.c_str());
 }
 
 void CVNodeManager::unregister_node_callback(
@@ -231,7 +235,7 @@ void CVNodeManager::unregister_node_callback(
 {
     std::string node_name = request->node_name;
 
-    RCLCPP_INFO(get_logger(), "Unregistering the node '%s'", node_name.c_str());
+    RCLCPP_DEBUG(get_logger(), "Unregistering the node '%s'", node_name.c_str());
 
     // Check if the node is already registered
     if (cv_nodes.find(node_name) == cv_nodes.end())
@@ -242,7 +246,7 @@ void CVNodeManager::unregister_node_callback(
 
     cv_nodes.erase(node_name);
 
-    RCLCPP_INFO(get_logger(), "The node '%s' is unregistered", node_name.c_str());
+    RCLCPP_DEBUG(get_logger(), "The node '%s' is unregistered", node_name.c_str());
     return;
 }
 
