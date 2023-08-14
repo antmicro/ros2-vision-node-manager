@@ -1,3 +1,7 @@
+// Copyright 2022-2023 Antmicro <www.antmicro.com>
+//
+// SPDX-License-Identifier: Apache-2.0
+
 #include <cvnode_manager/cvnode_manager.hpp>
 #include <kenning_computer_vision_msgs/runtime_msg_type.hpp>
 #include <nlohmann/json.hpp>
