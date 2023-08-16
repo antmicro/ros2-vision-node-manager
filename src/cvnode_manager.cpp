@@ -182,6 +182,44 @@ void CVNodeManager::async_broadcast_request(
     }
 }
 
+void CVNodeManager::async_broadcast_request(
+    const std::shared_ptr<rmw_request_id_t> header,
+    const InferenceCVNodeSrv::Request::SharedPtr request,
+    std::function<RuntimeProtocolSrv::Response(const InferenceCVNodeSrv::Response::SharedPtr)> callback)
+{
+    if (cv_nodes.size() < 1)
+    {
+        // TODO: Reset node here
+        RuntimeProtocolSrv::Response response;
+        RCLCPP_ERROR(get_logger(), "No CV nodes registered");
+        response.response.message_type = ERROR;
+        dataprovider_service->send_response(*header, response);
+    }
+
+    answer_counter = 0;
+    for (auto &cv_node : cv_nodes)
+    {
+        cv_node.second->async_send_request(
+            request,
+            [this, header, &callback](rclcpp::Client<InferenceCVNodeSrv>::SharedFuture future)
+            {
+                if (answer_counter < 0)
+                {
+                    return;
+                }
+                answer_counter++;
+                auto response = future.get();
+                RuntimeProtocolSrv::Response dataprovider_response = callback(response);
+                if (static_cast<int>(cv_nodes.size()) == answer_counter)
+                {
+                    RCLCPP_DEBUG(get_logger(), "Received confirmation from all CV nodes");
+                    dataprovider_service->send_response(*header, dataprovider_response);
+                    answer_counter = 0;
+                }
+            });
+    }
+}
+
 InferenceCVNodeSrv::Request::SharedPtr CVNodeManager::extract_images(std::vector<uint8_t> &input_data_b)
 {
     InferenceCVNodeSrv::Request::SharedPtr request = std::make_shared<InferenceCVNodeSrv::Request>();

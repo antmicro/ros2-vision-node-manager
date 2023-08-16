@@ -81,6 +81,21 @@ private:
     void async_broadcast_request(
         const std::shared_ptr<rmw_request_id_t> header,
         const kenning_computer_vision_msgs::srv::InferenceCVNodeSrv::Request::SharedPtr request);
+
+    /**
+     * Broadcasts request asynchronously to all registered CVNode-like nodes.
+     * Sends 'OK' response when received confirmation from all nodes, 'ERROR' otherwise.
+     *
+     * @param header Header of the service request.
+     * @param request Request to broadcast.
+     * @param callback Callback to be executed with every received confirmation.
+     */
+    void async_broadcast_request(
+        const std::shared_ptr<rmw_request_id_t> header,
+        const kenning_computer_vision_msgs::srv::InferenceCVNodeSrv::Request::SharedPtr request,
+        std::function<kenning_computer_vision_msgs::srv::RuntimeProtocolSrv::Response(
+            const kenning_computer_vision_msgs::srv::InferenceCVNodeSrv::Response::SharedPtr)> callback);
+
     /**
      * Synthetic testing scenario.
      *
