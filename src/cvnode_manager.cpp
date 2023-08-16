@@ -32,6 +32,7 @@ void CVNodeManager::dataprovider_callback(
 {
 
     RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
+    InferenceCVNodeSrv::Request::SharedPtr inference_request;
     switch (request->request.message_type)
     {
     case OK:
@@ -55,13 +56,27 @@ void CVNodeManager::dataprovider_callback(
         response.response.message_type = ERROR;
         dataprovider_service->send_response(*header, response);
         break;
-    case MODEL:
-        prepare_nodes(header);
-        break;
     case IOSPEC:
         // IGNORE
         response.response.message_type = OK;
         dataprovider_service->send_response(*header, response);
+        break;
+    case MODEL:
+        inference_request = std::make_shared<InferenceCVNodeSrv::Request>();
+        inference_request->message_type = MODEL;
+        async_broadcast_request(header, inference_request);
+        break;
+    case DATA:
+        inference_request = extract_images(request->request.data);
+        if (inference_request->message_type == ERROR)
+        {
+            // TODO: Abort further processing
+            RCLCPP_DEBUG(get_logger(), "Error while extracting data. Aborting.");
+            RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
+            response.response.message_type = ERROR;
+            dataprovider_service->send_response(*header, response);
+        }
+        async_broadcast_request(header, inference_request);
         break;
     default:
         if (inference_scenario_func != nullptr)
@@ -84,16 +99,12 @@ void CVNodeManager::synthetic_scenario(
     const std::shared_ptr<RuntimeProtocolSrv::Request> request)
 {
     RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
+    InferenceCVNodeSrv::Request::SharedPtr inference_request = std::make_shared<InferenceCVNodeSrv::Request>();
     switch (request->request.message_type)
     {
-    case DATA:
-        broadcast_data(header, request);
-        break;
     case PROCESS:
-        // TODO: Implement
-        RCLCPP_ERROR(get_logger(), "Not yet implemented. Aborting.");
-        response.response.message_type = ERROR;
-        dataprovider_service->send_response(*header, response);
+        inference_request->message_type = PROCESS;
+        async_broadcast_request(header, inference_request);
         break;
     case OUTPUT:
         // TODO: Implement
@@ -116,28 +127,57 @@ void CVNodeManager::synthetic_scenario(
     }
 }
 
-void CVNodeManager::broadcast_data(
+void CVNodeManager::async_broadcast_request(
     const std::shared_ptr<rmw_request_id_t> header,
-    const std::shared_ptr<RuntimeProtocolSrv::Request> request)
+    const InferenceCVNodeSrv::Request::SharedPtr request)
 {
-    InferenceCVNodeSrv::Request::SharedPtr data_request = extract_images(request->request.data);
-    if (data_request->message_type == ERROR)
+    if (cv_nodes.size() < 1)
     {
-        // TODO: Abort further processing
-        RCLCPP_DEBUG(get_logger(), "Error while extracting data. Aborting.");
-        RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
+        // TODO: Reset node here
+        RuntimeProtocolSrv::Response response;
+        RCLCPP_ERROR(get_logger(), "No CV nodes registered");
         response.response.message_type = ERROR;
         dataprovider_service->send_response(*header, response);
     }
+
     answer_counter = 0;
     for (auto &cv_node : cv_nodes)
     {
         cv_node.second->async_send_request(
-            data_request,
-            [this, header, &cv_node](rclcpp::Client<InferenceCVNodeSrv>::SharedFuture future)
+            request,
+            [this, header](rclcpp::Client<InferenceCVNodeSrv>::SharedFuture future)
             {
-                RCLCPP_DEBUG(get_logger(), "[DATA] Received response from the %s node", cv_node.first.c_str());
-                async_receive_confirmation(future, header);
+                if (answer_counter < 0)
+                {
+                    return;
+                }
+                answer_counter++;
+                auto response = future.get();
+                RuntimeProtocolSrv::Response dataprovider_response;
+                switch (response->message_type)
+                {
+                case OK:
+                    if (static_cast<int>(cv_nodes.size()) == answer_counter)
+                    {
+                        RCLCPP_DEBUG(get_logger(), "Received confirmation from all CV nodes");
+                        dataprovider_response.response.message_type = OK;
+                        dataprovider_service->send_response(*header, dataprovider_response);
+                        answer_counter = 0;
+                    }
+                    break;
+                case ERROR:
+                    RCLCPP_ERROR(get_logger(), "Failed to receive confirmation from the CV node");
+                    dataprovider_response.response.message_type = ERROR;
+                    dataprovider_service->send_response(*header, dataprovider_response);
+                    answer_counter = -1;
+                    break;
+                default:
+                    RCLCPP_ERROR(get_logger(), "Unknown response from the CV node");
+                    dataprovider_response.response.message_type = ERROR;
+                    dataprovider_service->send_response(*header, dataprovider_response);
+                    answer_counter = -1;
+                    break;
+                }
             });
     }
 }
@@ -177,70 +217,6 @@ InferenceCVNodeSrv::Request::SharedPtr CVNodeManager::extract_images(std::vector
     }
     request->message_type = DATA;
     return request;
-}
-
-void CVNodeManager::prepare_nodes(const std::shared_ptr<rmw_request_id_t> header)
-{
-    RuntimeProtocolSrv::Response response;
-    if (cv_nodes.size() < 1)
-    {
-        // TODO: Reset node here
-        RCLCPP_ERROR(get_logger(), "No CV nodes registered");
-        response.response.message_type = ERROR;
-        dataprovider_service->send_response(*header, response);
-    }
-
-    std::shared_ptr<InferenceCVNodeSrv::Request> cv_node_request = std::make_shared<InferenceCVNodeSrv::Request>();
-    cv_node_request->message_type = MODEL;
-    answer_counter = 0;
-    for (auto &cv_node : cv_nodes)
-    {
-        cv_node.second->async_send_request(
-            cv_node_request,
-            [this, header, &cv_node](rclcpp::Client<InferenceCVNodeSrv>::SharedFuture future)
-            {
-                RCLCPP_DEBUG(get_logger(), "[MODEL] Received response from the %s node", cv_node.first.c_str());
-                async_receive_confirmation(future, header);
-            });
-    }
-    RCLCPP_DEBUG(get_logger(), "Sent preparation request to the CV nodes");
-}
-
-void CVNodeManager::async_receive_confirmation(
-    rclcpp::Client<InferenceCVNodeSrv>::SharedFuture future,
-    const std::shared_ptr<rmw_request_id_t> header)
-{
-    if (answer_counter < 0)
-    {
-        return;
-    }
-    answer_counter++;
-    auto response = future.get();
-    RuntimeProtocolSrv::Response dataprovider_response;
-    switch (response->message_type)
-    {
-    case OK:
-        if (static_cast<int>(cv_nodes.size()) == answer_counter)
-        {
-            RCLCPP_DEBUG(get_logger(), "Received confirmation from all CV nodes");
-            dataprovider_response.response.message_type = OK;
-            dataprovider_service->send_response(*header, dataprovider_response);
-            answer_counter = 0;
-        }
-        break;
-    case ERROR:
-        RCLCPP_ERROR(get_logger(), "Failed to receive confirmation from the CV node");
-        dataprovider_response.response.message_type = ERROR;
-        dataprovider_service->send_response(*header, dataprovider_response);
-        answer_counter = -1;
-        break;
-    default:
-        RCLCPP_ERROR(get_logger(), "Unknown response from the CV node");
-        dataprovider_response.response.message_type = ERROR;
-        dataprovider_service->send_response(*header, dataprovider_response);
-        answer_counter = -1;
-        break;
-    }
 }
 
 void CVNodeManager::manage_node_callback(

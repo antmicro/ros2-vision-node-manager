@@ -59,7 +59,7 @@ private:
      */
     void dataprovider_callback(
         const std::shared_ptr<rmw_request_id_t> header,
-        const std::shared_ptr<kenning_computer_vision_msgs::srv::RuntimeProtocolSrv::Request> request);
+        const kenning_computer_vision_msgs::srv::RuntimeProtocolSrv::Request::SharedPtr request);
 
     /**
      * Extracts input data from bytes-encoded.
@@ -72,22 +72,15 @@ private:
     extract_images(std::vector<uint8_t> &input_data_b);
 
     /**
-     * Prepares all the registered CVNode-like nodes.
+     * Broadcasts request asynchronously to all registered CVNode-like nodes.
+     * Sends 'OK' response when received confirmation from all nodes, 'ERROR' otherwise.
      *
      * @param header Header of the service request.
+     * @param request Request to broadcast.
      */
-    void prepare_nodes(const std::shared_ptr<rmw_request_id_t> header);
-
-    /**
-     * Sends data from request to all the registered CVNode-like nodes.
-     *
-     * @param header Header of the service request.
-     * @param request Request of the service along with attached data.
-     */
-    void broadcast_data(
+    void async_broadcast_request(
         const std::shared_ptr<rmw_request_id_t> header,
-        const std::shared_ptr<kenning_computer_vision_msgs::srv::RuntimeProtocolSrv::Request> request);
-
+        const kenning_computer_vision_msgs::srv::InferenceCVNodeSrv::Request::SharedPtr request);
     /**
      * Synthetic testing scenario.
      *
@@ -96,17 +89,7 @@ private:
      */
     void synthetic_scenario(
         const std::shared_ptr<rmw_request_id_t> header,
-        const std::shared_ptr<kenning_computer_vision_msgs::srv::RuntimeProtocolSrv::Request> request);
-
-    /**
-     * Asynchronous callback for receiving confirmation from the CVNode-like nodes.
-     *
-     * @param future Future of the service response.
-     * @param header Header of the service request.
-     */
-    void async_receive_confirmation(
-        rclcpp::Client<kenning_computer_vision_msgs::srv::InferenceCVNodeSrv>::SharedFuture future,
-        const std::shared_ptr<rmw_request_id_t> header);
+        const kenning_computer_vision_msgs::srv::RuntimeProtocolSrv::Request::SharedPtr request);
 
     /**
      * Creates a client to a service.
@@ -150,7 +133,7 @@ private:
     /// Testing scenario function
     void (CVNodeManager::*inference_scenario_func)(
         const std::shared_ptr<rmw_request_id_t>,
-        const std::shared_ptr<kenning_computer_vision_msgs::srv::RuntimeProtocolSrv::Request>) = nullptr;
+        const kenning_computer_vision_msgs::srv::RuntimeProtocolSrv::Request::SharedPtr) = nullptr;
 
     bool dataprovider_initialized = false; ///< Indicates whether the dataprovider is initialized
     int answer_counter = 0;                ///< Counter of received answers from the CVNodes
