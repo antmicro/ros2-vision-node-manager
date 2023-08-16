@@ -4,7 +4,6 @@
 
 #include <cvnode_manager/cvnode_manager.hpp>
 #include <kenning_computer_vision_msgs/runtime_msg_type.hpp>
-#include <nlohmann/json.hpp>
 #include <sensor_msgs/msg/image.hpp>
 
 namespace cvnode_manager
@@ -14,6 +13,7 @@ using namespace kenning_computer_vision_msgs::runtime_message_type;
 using InferenceCVNodeSrv = kenning_computer_vision_msgs::srv::InferenceCVNodeSrv;
 using ManageCVNode = kenning_computer_vision_msgs::srv::ManageCVNode;
 using RuntimeProtocolSrv = kenning_computer_vision_msgs::srv::RuntimeProtocolSrv;
+using SegmentationMsg = kenning_computer_vision_msgs::msg::SegmentationMsg;
 
 CVNodeManager::CVNodeManager(const rclcpp::NodeOptions &options) : Node("cvnode_manager", options)
 {
@@ -78,6 +78,12 @@ void CVNodeManager::dataprovider_callback(
         }
         async_broadcast_request(header, inference_request);
         break;
+    case STATS:
+        // TODO: Implement
+        RCLCPP_ERROR(get_logger(), "Not yet implemented. Aborting.");
+        response.response.message_type = ERROR;
+        dataprovider_service->send_response(*header, response);
+        break;
     default:
         if (inference_scenario_func != nullptr)
         {
@@ -100,6 +106,7 @@ void CVNodeManager::synthetic_scenario(
 {
     RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
     InferenceCVNodeSrv::Request::SharedPtr inference_request = std::make_shared<InferenceCVNodeSrv::Request>();
+    output_json = std::make_shared<nlohmann::json>();
     switch (request->request.message_type)
     {
     case PROCESS:
@@ -107,16 +114,23 @@ void CVNodeManager::synthetic_scenario(
         async_broadcast_request(header, inference_request);
         break;
     case OUTPUT:
-        // TODO: Implement
-        RCLCPP_ERROR(get_logger(), "Not yet implemented. Aborting.");
-        response.response.message_type = ERROR;
-        dataprovider_service->send_response(*header, response);
-        break;
-    case STATS:
-        // TODO: Implement
-        RCLCPP_ERROR(get_logger(), "Not yet implemented. Aborting.");
-        response.response.message_type = ERROR;
-        dataprovider_service->send_response(*header, response);
+        inference_request->message_type = OUTPUT;
+        output_json->emplace("output", nlohmann::json::array());
+        async_broadcast_request(
+            header,
+            inference_request,
+            [this](InferenceCVNodeSrv::Response::SharedPtr response) -> RuntimeProtocolSrv::Response
+            {
+                RuntimeProtocolSrv::Response runtime_response = RuntimeProtocolSrv::Response();
+                runtime_response.response.message_type = OK;
+                for (auto &segmentation : response->output)
+                {
+                    output_json->at("output").push_back(segmentation_to_json(segmentation));
+                }
+                std::string output_string = output_json->dump();
+                runtime_response.response.data = std::vector<uint8_t>(output_string.begin(), output_string.end());
+                return runtime_response;
+            });
         break;
     default:
         // TODO: Abort further processing
@@ -125,6 +139,30 @@ void CVNodeManager::synthetic_scenario(
         dataprovider_service->send_response(*header, response);
         break;
     }
+}
+
+nlohmann::json CVNodeManager::segmentation_to_json(const SegmentationMsg &segmentation)
+{
+    nlohmann::json json = nlohmann::json::array();
+    for (size_t i = 0; i < segmentation.classes.size(); i++)
+    {
+        nlohmann::json object;
+        nlohmann::json mask;
+        nlohmann::json bbox;
+        object.emplace("class", segmentation.classes[i]);
+        object.emplace("score", segmentation.scores[i]);
+        // NOTE: Attaching mask takes a lot of time (may take seconds, depending on amount and resolution)
+        mask.emplace("dimensions", segmentation.masks[i].dimension);
+        mask.emplace("data", segmentation.masks[i].data);
+        object.emplace("mask", mask);
+        bbox.emplace("xmin", segmentation.boxes[i].xmin);
+        bbox.emplace("ymin", segmentation.boxes[i].ymin);
+        bbox.emplace("xmax", segmentation.boxes[i].xmax);
+        bbox.emplace("ymax", segmentation.boxes[i].ymax);
+        object.emplace("box", bbox);
+        json.push_back(object);
+    }
+    return json;
 }
 
 void CVNodeManager::async_broadcast_request(

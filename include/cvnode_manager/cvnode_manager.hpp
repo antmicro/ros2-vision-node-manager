@@ -4,10 +4,12 @@
 
 #pragma once
 
+#include <nlohmann/json.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <string>
 #include <unordered_map>
 
+#include <kenning_computer_vision_msgs/msg/segmentation_msg.hpp>
 #include <kenning_computer_vision_msgs/srv/inference_cv_node_srv.hpp>
 #include <kenning_computer_vision_msgs/srv/manage_cv_node.hpp>
 #include <kenning_computer_vision_msgs/srv/runtime_protocol_srv.hpp>
@@ -97,6 +99,15 @@ private:
             const kenning_computer_vision_msgs::srv::InferenceCVNodeSrv::Response::SharedPtr)> callback);
 
     /**
+     * Converts SegmentationMsg to json.
+     *
+     * @param segmentation Segmentation to be extracted.
+     *
+     * @return Array of JSON segmentation representations.
+     */
+    nlohmann::json segmentation_to_json(const kenning_computer_vision_msgs::msg::SegmentationMsg &segmentation);
+
+    /**
      * Synthetic testing scenario.
      *
      * @param header Header of the service request.
@@ -150,8 +161,9 @@ private:
         const std::shared_ptr<rmw_request_id_t>,
         const kenning_computer_vision_msgs::srv::RuntimeProtocolSrv::Request::SharedPtr) = nullptr;
 
-    bool dataprovider_initialized = false; ///< Indicates whether the dataprovider is initialized
-    int answer_counter = 0;                ///< Counter of received answers from the CVNodes
+    bool dataprovider_initialized = false;       ///< Indicates whether the dataprovider is initialized
+    int answer_counter = 0;                      ///< Counter of received answers from the CVNodes
+    std::shared_ptr<nlohmann::json> output_json; ///< JSON storing output segmentations
 
 public:
     /**
