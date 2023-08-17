@@ -146,6 +146,13 @@ private:
         return true;
     }
 
+    /**
+     * Aborts futher processing.
+     *
+     * Reports error to all the registered CVNode-like nodes.
+     */
+    void abort();
+
     /// Service to register the CVNode
     rclcpp::Service<kenning_computer_vision_msgs::srv::ManageCVNode>::SharedPtr manage_service;
 

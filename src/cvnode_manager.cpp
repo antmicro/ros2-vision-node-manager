@@ -51,8 +51,8 @@ void CVNodeManager::dataprovider_callback(
         dataprovider_service->send_response(*header, response);
         break;
     case ERROR:
-        // TODO: Abort further processing
         RCLCPP_ERROR(get_logger(), "Received error message from the dataprovider");
+        abort();
         response.response.message_type = ERROR;
         dataprovider_service->send_response(*header, response);
         break;
@@ -70,8 +70,8 @@ void CVNodeManager::dataprovider_callback(
         inference_request = extract_images(request->request.data);
         if (inference_request->message_type == ERROR)
         {
-            // TODO: Abort further processing
             RCLCPP_DEBUG(get_logger(), "Error while extracting data. Aborting.");
+            abort();
             RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
             response.response.message_type = ERROR;
             dataprovider_service->send_response(*header, response);
@@ -91,8 +91,8 @@ void CVNodeManager::dataprovider_callback(
         }
         else
         {
-            // TODO: Abort further processing
             RCLCPP_ERROR(get_logger(), "Inference scenario function is not initialized");
+            abort();
             response.response.message_type = ERROR;
             dataprovider_service->send_response(*header, response);
         }
@@ -133,8 +133,8 @@ void CVNodeManager::synthetic_scenario(
             });
         break;
     default:
-        // TODO: Abort further processing
         RCLCPP_ERROR(get_logger(), "Unsupported message type. Aborting.");
+        abort();
         response.response.message_type = ERROR;
         dataprovider_service->send_response(*header, response);
         break;
@@ -171,9 +171,9 @@ void CVNodeManager::async_broadcast_request(
 {
     if (cv_nodes.size() < 1)
     {
-        // TODO: Reset node here
-        RuntimeProtocolSrv::Response response;
         RCLCPP_ERROR(get_logger(), "No CV nodes registered");
+        abort();
+        RuntimeProtocolSrv::Response response;
         response.response.message_type = ERROR;
         dataprovider_service->send_response(*header, response);
     }
@@ -208,12 +208,14 @@ void CVNodeManager::async_broadcast_request(
                     dataprovider_response.response.message_type = ERROR;
                     dataprovider_service->send_response(*header, dataprovider_response);
                     answer_counter = -1;
+                    abort();
                     break;
                 default:
                     RCLCPP_ERROR(get_logger(), "Unknown response from the CV node");
                     dataprovider_response.response.message_type = ERROR;
                     dataprovider_service->send_response(*header, dataprovider_response);
                     answer_counter = -1;
+                    abort();
                     break;
                 }
             });
@@ -227,9 +229,9 @@ void CVNodeManager::async_broadcast_request(
 {
     if (cv_nodes.size() < 1)
     {
-        // TODO: Reset node here
-        RuntimeProtocolSrv::Response response;
         RCLCPP_ERROR(get_logger(), "No CV nodes registered");
+        abort();
+        RuntimeProtocolSrv::Response response;
         response.response.message_type = ERROR;
         dataprovider_service->send_response(*header, response);
     }
@@ -268,7 +270,6 @@ InferenceCVNodeSrv::Request::SharedPtr CVNodeManager::extract_images(std::vector
         std::vector<nlohmann::json> data = data_j.at("data");
         if (data.size() == 0)
         {
-            // TODO: Abort further processing
             RCLCPP_ERROR(get_logger(), "Data is empty");
             request->message_type = ERROR;
             return request;
@@ -286,7 +287,6 @@ InferenceCVNodeSrv::Request::SharedPtr CVNodeManager::extract_images(std::vector
     }
     catch (nlohmann::json::exception &e)
     {
-        // TODO: Abort further processing
         RCLCPP_ERROR(get_logger(), "Error while parsing data json: %s", e.what());
         request->message_type = ERROR;
         return request;
@@ -325,7 +325,15 @@ void CVNodeManager::register_node_callback(
 
     response->status = false;
 
-    // TODO: Abort if inference testing already started
+    if (dataprovider_initialized)
+    {
+        response->message = "Inference has already started";
+        RCLCPP_WARN(
+            get_logger(),
+            "Could not register the node '%s' because inference has already started",
+            node_name.c_str());
+        return;
+    }
 
     // Check if the node is already registered
     if (cv_nodes.find(node_name) != cv_nodes.end())
@@ -362,7 +370,7 @@ void CVNodeManager::unregister_node_callback(
     // Check if the node is already registered
     if (cv_nodes.find(node_name) == cv_nodes.end())
     {
-        RCLCPP_ERROR(get_logger(), "The node '%s' is not registered", node_name.c_str());
+        RCLCPP_WARN(get_logger(), "The node '%s' is not registered", node_name.c_str());
         return;
     }
 
@@ -370,6 +378,25 @@ void CVNodeManager::unregister_node_callback(
 
     RCLCPP_DEBUG(get_logger(), "The node '%s' is unregistered", node_name.c_str());
     return;
+}
+
+void CVNodeManager::abort()
+{
+    InferenceCVNodeSrv::Request::SharedPtr request = std::make_shared<InferenceCVNodeSrv::Request>();
+    request->message_type = ERROR;
+    for (auto &cv_node : cv_nodes)
+    {
+        cv_node.second->async_send_request(
+            request,
+            [this](rclcpp::Client<InferenceCVNodeSrv>::SharedFuture future)
+            {
+                auto response = future.get();
+                if (response->message_type == ERROR)
+                {
+                    RCLCPP_DEBUG(get_logger(), "Received confirmation from all CV nodes");
+                }
+            });
+    }
 }
 
 } // namespace cvnode_manager
