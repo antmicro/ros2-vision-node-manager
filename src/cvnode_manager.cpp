@@ -10,7 +10,7 @@ namespace cvnode_manager
 {
 using namespace kenning_computer_vision_msgs::runtime_message_type;
 
-using InferenceCVNodeSrv = kenning_computer_vision_msgs::srv::InferenceCVNodeSrv;
+using SegmentCVNodeSrv = kenning_computer_vision_msgs::srv::SegmentCVNodeSrv;
 using ManageCVNode = kenning_computer_vision_msgs::srv::ManageCVNode;
 using RuntimeProtocolSrv = kenning_computer_vision_msgs::srv::RuntimeProtocolSrv;
 using SegmentationMsg = kenning_computer_vision_msgs::msg::SegmentationMsg;
@@ -32,7 +32,7 @@ void CVNodeManager::dataprovider_callback(
 {
 
     RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
-    InferenceCVNodeSrv::Request::SharedPtr inference_request;
+    SegmentCVNodeSrv::Request::SharedPtr inference_request;
     switch (request->request.message_type)
     {
     case OK:
@@ -62,7 +62,7 @@ void CVNodeManager::dataprovider_callback(
         dataprovider_service->send_response(*header, response);
         break;
     case MODEL:
-        inference_request = std::make_shared<InferenceCVNodeSrv::Request>();
+        inference_request = std::make_shared<SegmentCVNodeSrv::Request>();
         inference_request->message_type = MODEL;
         async_broadcast_request(header, inference_request);
         break;
@@ -79,7 +79,7 @@ void CVNodeManager::dataprovider_callback(
         async_broadcast_request(header, inference_request);
         break;
     case STATS:
-        // TODO: Implement
+        // NYI: Implement stats collecting
         RCLCPP_ERROR(get_logger(), "Not yet implemented. Aborting.");
         response.response.message_type = ERROR;
         dataprovider_service->send_response(*header, response);
@@ -105,7 +105,7 @@ void CVNodeManager::synthetic_scenario(
     const std::shared_ptr<RuntimeProtocolSrv::Request> request)
 {
     RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
-    InferenceCVNodeSrv::Request::SharedPtr inference_request = std::make_shared<InferenceCVNodeSrv::Request>();
+    SegmentCVNodeSrv::Request::SharedPtr inference_request = std::make_shared<SegmentCVNodeSrv::Request>();
     output_json = std::make_shared<nlohmann::json>();
     switch (request->request.message_type)
     {
@@ -119,7 +119,7 @@ void CVNodeManager::synthetic_scenario(
         async_broadcast_request(
             header,
             inference_request,
-            [this](InferenceCVNodeSrv::Response::SharedPtr response) -> RuntimeProtocolSrv::Response
+            [this](SegmentCVNodeSrv::Response::SharedPtr response) -> RuntimeProtocolSrv::Response
             {
                 RuntimeProtocolSrv::Response runtime_response = RuntimeProtocolSrv::Response();
                 runtime_response.response.message_type = OK;
@@ -167,7 +167,7 @@ nlohmann::json CVNodeManager::segmentation_to_json(const SegmentationMsg &segmen
 
 void CVNodeManager::async_broadcast_request(
     const std::shared_ptr<rmw_request_id_t> header,
-    const InferenceCVNodeSrv::Request::SharedPtr request)
+    const SegmentCVNodeSrv::Request::SharedPtr request)
 {
     if (cv_nodes.size() < 1)
     {
@@ -183,7 +183,7 @@ void CVNodeManager::async_broadcast_request(
     {
         cv_node.second->async_send_request(
             request,
-            [this, header](rclcpp::Client<InferenceCVNodeSrv>::SharedFuture future)
+            [this, header](rclcpp::Client<SegmentCVNodeSrv>::SharedFuture future)
             {
                 if (answer_counter < 0)
                 {
@@ -224,8 +224,8 @@ void CVNodeManager::async_broadcast_request(
 
 void CVNodeManager::async_broadcast_request(
     const std::shared_ptr<rmw_request_id_t> header,
-    const InferenceCVNodeSrv::Request::SharedPtr request,
-    std::function<RuntimeProtocolSrv::Response(const InferenceCVNodeSrv::Response::SharedPtr)> callback)
+    const SegmentCVNodeSrv::Request::SharedPtr request,
+    std::function<RuntimeProtocolSrv::Response(const SegmentCVNodeSrv::Response::SharedPtr)> callback)
 {
     if (cv_nodes.size() < 1)
     {
@@ -241,7 +241,7 @@ void CVNodeManager::async_broadcast_request(
     {
         cv_node.second->async_send_request(
             request,
-            [this, header, &callback](rclcpp::Client<InferenceCVNodeSrv>::SharedFuture future)
+            [this, header, &callback](rclcpp::Client<SegmentCVNodeSrv>::SharedFuture future)
             {
                 if (answer_counter < 0)
                 {
@@ -260,9 +260,9 @@ void CVNodeManager::async_broadcast_request(
     }
 }
 
-InferenceCVNodeSrv::Request::SharedPtr CVNodeManager::extract_images(std::vector<uint8_t> &input_data_b)
+SegmentCVNodeSrv::Request::SharedPtr CVNodeManager::extract_images(std::vector<uint8_t> &input_data_b)
 {
-    InferenceCVNodeSrv::Request::SharedPtr request = std::make_shared<InferenceCVNodeSrv::Request>();
+    SegmentCVNodeSrv::Request::SharedPtr request = std::make_shared<SegmentCVNodeSrv::Request>();
 
     try
     {
@@ -344,8 +344,8 @@ void CVNodeManager::register_node_callback(
     }
 
     // Create a client to communicate with the node
-    rclcpp::Client<InferenceCVNodeSrv>::SharedPtr cv_node_service;
-    if (!initialize_service_client<InferenceCVNodeSrv>(request->srv_name, cv_node_service))
+    rclcpp::Client<SegmentCVNodeSrv>::SharedPtr cv_node_service;
+    if (!initialize_service_client<SegmentCVNodeSrv>(request->srv_name, cv_node_service))
     {
         response->message = "Could not initialize the communication service client";
         RCLCPP_ERROR(get_logger(), "Could not initialize the communication service client");
@@ -382,13 +382,13 @@ void CVNodeManager::unregister_node_callback(
 
 void CVNodeManager::abort()
 {
-    InferenceCVNodeSrv::Request::SharedPtr request = std::make_shared<InferenceCVNodeSrv::Request>();
+    SegmentCVNodeSrv::Request::SharedPtr request = std::make_shared<SegmentCVNodeSrv::Request>();
     request->message_type = ERROR;
     for (auto &cv_node : cv_nodes)
     {
         cv_node.second->async_send_request(
             request,
-            [this](rclcpp::Client<InferenceCVNodeSrv>::SharedFuture future)
+            [this](rclcpp::Client<SegmentCVNodeSrv>::SharedFuture future)
             {
                 auto response = future.get();
                 if (response->message_type == ERROR)

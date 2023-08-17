@@ -10,9 +10,9 @@
 #include <unordered_map>
 
 #include <kenning_computer_vision_msgs/msg/segmentation_msg.hpp>
-#include <kenning_computer_vision_msgs/srv/inference_cv_node_srv.hpp>
 #include <kenning_computer_vision_msgs/srv/manage_cv_node.hpp>
 #include <kenning_computer_vision_msgs/srv/runtime_protocol_srv.hpp>
+#include <kenning_computer_vision_msgs/srv/segment_cv_node_srv.hpp>
 
 namespace cvnode_manager
 {
@@ -70,7 +70,7 @@ private:
      *
      * @return request Request with data to distribute. If error occured, message type is set to ERROR.
      */
-    kenning_computer_vision_msgs::srv::InferenceCVNodeSrv::Request::SharedPtr
+    kenning_computer_vision_msgs::srv::SegmentCVNodeSrv::Request::SharedPtr
     extract_images(std::vector<uint8_t> &input_data_b);
 
     /**
@@ -82,7 +82,7 @@ private:
      */
     void async_broadcast_request(
         const std::shared_ptr<rmw_request_id_t> header,
-        const kenning_computer_vision_msgs::srv::InferenceCVNodeSrv::Request::SharedPtr request);
+        const kenning_computer_vision_msgs::srv::SegmentCVNodeSrv::Request::SharedPtr request);
 
     /**
      * Broadcasts request asynchronously to all registered CVNode-like nodes.
@@ -94,9 +94,9 @@ private:
      */
     void async_broadcast_request(
         const std::shared_ptr<rmw_request_id_t> header,
-        const kenning_computer_vision_msgs::srv::InferenceCVNodeSrv::Request::SharedPtr request,
+        const kenning_computer_vision_msgs::srv::SegmentCVNodeSrv::Request::SharedPtr request,
         std::function<kenning_computer_vision_msgs::srv::RuntimeProtocolSrv::Response(
-            const kenning_computer_vision_msgs::srv::InferenceCVNodeSrv::Response::SharedPtr)> callback);
+            const kenning_computer_vision_msgs::srv::SegmentCVNodeSrv::Response::SharedPtr)> callback);
 
     /**
      * Converts SegmentationMsg to json.
@@ -160,7 +160,7 @@ private:
     rclcpp::Service<kenning_computer_vision_msgs::srv::RuntimeProtocolSrv>::SharedPtr dataprovider_service;
 
     /// Map of registered nodes
-    std::unordered_map<std::string, rclcpp::Client<kenning_computer_vision_msgs::srv::InferenceCVNodeSrv>::SharedPtr>
+    std::unordered_map<std::string, rclcpp::Client<kenning_computer_vision_msgs::srv::SegmentCVNodeSrv>::SharedPtr>
         cv_nodes;
 
     /// Testing scenario function
