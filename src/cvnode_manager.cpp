@@ -5,6 +5,7 @@
 #include <cvnode_manager/cvnode_manager.hpp>
 #include <kenning_computer_vision_msgs/runtime_msg_type.hpp>
 #include <sensor_msgs/msg/image.hpp>
+#include <thread>
 
 namespace cvnode_manager
 {
@@ -33,15 +34,35 @@ void CVNodeManager::dataprovider_callback(
 
     RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
     SegmentCVNodeSrv::Request::SharedPtr inference_request;
+    RCLCPP_DEBUG(get_logger(), "Received message (%d) from the dataprovider", request->request.message_type);
     switch (request->request.message_type)
     {
     case OK:
         if (!dataprovider_initialized)
         {
-            // TODO: Prepare resources and lock up untill inference is started
             RCLCPP_DEBUG(get_logger(), "Received DataProvider initialization request");
             dataprovider_initialized = true;
-            response.response.message_type = OK;
+            if (std::get<1>(cv_node) == nullptr)
+            {
+                std::thread(
+                    [this, header]()
+                    {
+                        std::unique_lock<std::mutex> lk(dataprovider_mutex);
+                        RCLCPP_DEBUG(get_logger(), "Waiting for inference to start");
+                        dataprovider_cv.wait(lk);
+                        RCLCPP_DEBUG(get_logger(), "Starting inference");
+                        RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
+                        response.response.message_type = OK;
+                        dataprovider_service->send_response(*header, response);
+                    })
+                    .detach();
+            }
+            else
+            {
+                RCLCPP_DEBUG(get_logger(), "Starting inference");
+                response.response.message_type = OK;
+                dataprovider_service->send_response(*header, response);
+            }
         }
         else
         {
@@ -125,7 +146,16 @@ void CVNodeManager::synthetic_scenario(
                 runtime_response.response.message_type = OK;
                 for (auto &segmentation : response->output)
                 {
-                    output_json->at("output").push_back(segmentation_to_json(segmentation));
+                    try
+                    {
+                        output_json->at("output").push_back(segmentation_to_json(segmentation));
+                    }
+                    catch (nlohmann::json::exception &e)
+                    {
+                        RCLCPP_ERROR(get_logger(), "Error while parsing output json: %s", e.what());
+                        runtime_response.response.message_type = ERROR;
+                        return runtime_response;
+                    }
                 }
                 std::string output_string = output_json->dump();
                 runtime_response.response.data = std::vector<uint8_t>(output_string.begin(), output_string.end());
@@ -169,57 +199,39 @@ void CVNodeManager::async_broadcast_request(
     const std::shared_ptr<rmw_request_id_t> header,
     const SegmentCVNodeSrv::Request::SharedPtr request)
 {
-    if (cv_nodes.size() < 1)
+    if (std::get<1>(cv_node) == nullptr)
     {
-        RCLCPP_ERROR(get_logger(), "No CV nodes registered");
-        abort();
+        RCLCPP_ERROR(get_logger(), "No CVNode registered");
         RuntimeProtocolSrv::Response response;
         response.response.message_type = ERROR;
         dataprovider_service->send_response(*header, response);
     }
 
-    answer_counter = 0;
-    for (auto &cv_node : cv_nodes)
-    {
-        cv_node.second->async_send_request(
-            request,
-            [this, header](rclcpp::Client<SegmentCVNodeSrv>::SharedFuture future)
+    std::get<1>(cv_node)->async_send_request(
+        request,
+        [this, header](rclcpp::Client<SegmentCVNodeSrv>::SharedFuture future)
+        {
+            auto response = future.get();
+            RuntimeProtocolSrv::Response dataprovider_response;
+            switch (response->message_type)
             {
-                if (answer_counter < 0)
-                {
-                    return;
-                }
-                answer_counter++;
-                auto response = future.get();
-                RuntimeProtocolSrv::Response dataprovider_response;
-                switch (response->message_type)
-                {
-                case OK:
-                    if (static_cast<int>(cv_nodes.size()) == answer_counter)
-                    {
-                        RCLCPP_DEBUG(get_logger(), "Received confirmation from all CV nodes");
-                        dataprovider_response.response.message_type = OK;
-                        dataprovider_service->send_response(*header, dataprovider_response);
-                        answer_counter = 0;
-                    }
-                    break;
-                case ERROR:
-                    RCLCPP_ERROR(get_logger(), "Failed to receive confirmation from the CV node");
-                    dataprovider_response.response.message_type = ERROR;
-                    dataprovider_service->send_response(*header, dataprovider_response);
-                    answer_counter = -1;
-                    abort();
-                    break;
-                default:
-                    RCLCPP_ERROR(get_logger(), "Unknown response from the CV node");
-                    dataprovider_response.response.message_type = ERROR;
-                    dataprovider_service->send_response(*header, dataprovider_response);
-                    answer_counter = -1;
-                    abort();
-                    break;
-                }
-            });
-    }
+            case OK:
+                RCLCPP_DEBUG(get_logger(), "Received confirmation");
+                dataprovider_response.response.message_type = OK;
+                break;
+            case ERROR:
+                RCLCPP_ERROR(get_logger(), "Failed to receive confirmation from the CVNode");
+                dataprovider_response.response.message_type = ERROR;
+                abort();
+                break;
+            default:
+                RCLCPP_ERROR(get_logger(), "Unknown response from the CV node");
+                dataprovider_response.response.message_type = ERROR;
+                abort();
+                break;
+            }
+            dataprovider_service->send_response(*header, dataprovider_response);
+        });
 }
 
 void CVNodeManager::async_broadcast_request(
@@ -227,37 +239,44 @@ void CVNodeManager::async_broadcast_request(
     const SegmentCVNodeSrv::Request::SharedPtr request,
     std::function<RuntimeProtocolSrv::Response(const SegmentCVNodeSrv::Response::SharedPtr)> callback)
 {
-    if (cv_nodes.size() < 1)
+    if (std::get<1>(cv_node) == nullptr)
     {
-        RCLCPP_ERROR(get_logger(), "No CV nodes registered");
-        abort();
+        RCLCPP_ERROR(get_logger(), "No CVNode registered");
         RuntimeProtocolSrv::Response response;
         response.response.message_type = ERROR;
         dataprovider_service->send_response(*header, response);
     }
 
-    answer_counter = 0;
-    for (auto &cv_node : cv_nodes)
-    {
-        cv_node.second->async_send_request(
-            request,
-            [this, header, &callback](rclcpp::Client<SegmentCVNodeSrv>::SharedFuture future)
+    std::get<1>(cv_node)->async_send_request(
+        request,
+        [this, header, callback](rclcpp::Client<SegmentCVNodeSrv>::SharedFuture future)
+        {
+            auto response = future.get();
+            RuntimeProtocolSrv::Response dataprovider_response;
+            if (response->message_type != OK)
             {
-                if (answer_counter < 0)
-                {
-                    return;
-                }
-                answer_counter++;
-                auto response = future.get();
-                RuntimeProtocolSrv::Response dataprovider_response = callback(response);
-                if (static_cast<int>(cv_nodes.size()) == answer_counter)
-                {
-                    RCLCPP_DEBUG(get_logger(), "Received confirmation from all CV nodes");
-                    dataprovider_service->send_response(*header, dataprovider_response);
-                    answer_counter = 0;
-                }
-            });
-    }
+                RCLCPP_ERROR(
+                    get_logger(),
+                    "Failed to receive confirmation from the CVNode (%d)",
+                    response->message_type);
+                dataprovider_response.response.message_type = ERROR;
+                abort();
+                dataprovider_service->send_response(*header, dataprovider_response);
+                return;
+            }
+
+            RCLCPP_DEBUG(get_logger(), "Received response from the CVNode. Executing callback");
+            dataprovider_response = callback(response);
+            if (dataprovider_response.response.message_type != OK)
+            {
+                RCLCPP_ERROR(
+                    get_logger(),
+                    "Failed to process response from the CVNode (%d)",
+                    dataprovider_response.response.message_type);
+                abort();
+            }
+            dataprovider_service->send_response(*header, dataprovider_response);
+        });
 }
 
 SegmentCVNodeSrv::Request::SharedPtr CVNodeManager::extract_images(std::vector<uint8_t> &input_data_b)
@@ -321,25 +340,16 @@ void CVNodeManager::register_node_callback(
     ManageCVNode::Response::SharedPtr response)
 {
     std::string node_name = request->node_name;
-    RCLCPP_DEBUG(get_logger(), "Registering the node '%s'", node_name.c_str());
-
     response->status = false;
+    RCLCPP_DEBUG(get_logger(), "Registering the '%s' node", node_name.c_str());
 
-    if (dataprovider_initialized)
+    if (std::get<1>(cv_node) != nullptr)
     {
-        response->message = "Inference has already started";
+        response->message = "There is already a node registered";
         RCLCPP_WARN(
             get_logger(),
-            "Could not register the node '%s' because inference has already started",
+            "Could not register the node '%s' because there is already a node registered",
             node_name.c_str());
-        return;
-    }
-
-    // Check if the node is already registered
-    if (cv_nodes.find(node_name) != cv_nodes.end())
-    {
-        response->message = "The node is already registered";
-        RCLCPP_ERROR(get_logger(), "The node '%s' is already registered", node_name.c_str());
         return;
     }
 
@@ -354,8 +364,12 @@ void CVNodeManager::register_node_callback(
 
     response->status = true;
     response->message = "The node is registered";
-    cv_nodes[node_name] = cv_node_service;
+    cv_node = std::make_tuple(node_name, cv_node_service);
 
+    if (dataprovider_initialized)
+    {
+        dataprovider_cv.notify_one();
+    }
     RCLCPP_DEBUG(get_logger(), "The node '%s' is registered", node_name.c_str());
 }
 
@@ -367,14 +381,13 @@ void CVNodeManager::unregister_node_callback(
 
     RCLCPP_DEBUG(get_logger(), "Unregistering the node '%s'", node_name.c_str());
 
-    // Check if the node is already registered
-    if (cv_nodes.find(node_name) == cv_nodes.end())
+    if (std::get<0>(cv_node) != node_name)
     {
         RCLCPP_WARN(get_logger(), "The node '%s' is not registered", node_name.c_str());
         return;
     }
 
-    cv_nodes.erase(node_name);
+    cv_node = std::make_tuple("", nullptr);
 
     RCLCPP_DEBUG(get_logger(), "The node '%s' is unregistered", node_name.c_str());
     return;
@@ -384,19 +397,23 @@ void CVNodeManager::abort()
 {
     SegmentCVNodeSrv::Request::SharedPtr request = std::make_shared<SegmentCVNodeSrv::Request>();
     request->message_type = ERROR;
-    for (auto &cv_node : cv_nodes)
-    {
-        cv_node.second->async_send_request(
-            request,
-            [this](rclcpp::Client<SegmentCVNodeSrv>::SharedFuture future)
+    std::get<1>(cv_node)->async_send_request(
+        request,
+        [this](rclcpp::Client<SegmentCVNodeSrv>::SharedFuture future)
+        {
+            auto response = future.get();
+            if (response->message_type == ERROR)
             {
-                auto response = future.get();
-                if (response->message_type == ERROR)
-                {
-                    RCLCPP_DEBUG(get_logger(), "Received confirmation from all CV nodes");
-                }
-            });
-    }
+                RCLCPP_DEBUG(get_logger(), "Received confirmation");
+            }
+            else
+            {
+                RCLCPP_ERROR(
+                    get_logger(),
+                    "Error while aborting the node, unknown response (%d)",
+                    response->message_type);
+            }
+        });
 }
 
 } // namespace cvnode_manager

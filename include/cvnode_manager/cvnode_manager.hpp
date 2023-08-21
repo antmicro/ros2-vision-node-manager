@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <mutex>
 #include <nlohmann/json.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <string>
@@ -24,7 +25,7 @@ class CVNodeManager : public rclcpp::Node
 {
 private:
     /**
-     * Callback for the service to manage the BaseCVNode-like nodes.
+     * Callback for the service to manage the CVNode-like node.
      *
      * @param request Request of the service for registering the node.
      * @param response Response of the service for registering the node.
@@ -34,7 +35,7 @@ private:
         kenning_computer_vision_msgs::srv::ManageCVNode::Response::SharedPtr response);
 
     /**
-     * Callback for the service to register the BaseCVNode-like nodes.
+     * Callback for the service to register the CVNode-like node.
      *
      * @param request Request of the service for registering the node.
      * @param response Response of the service for registering the node.
@@ -44,7 +45,7 @@ private:
         kenning_computer_vision_msgs::srv::ManageCVNode::Response::SharedPtr response);
 
     /**
-     * Callback for the service to unregister the BaseCVNode-like nodes.
+     * Callback for the service to unregister the CVNode-like node.
      *
      * @param request Request of the service for unregistering the node.
      * @param response Response of the service for unregistering the node.
@@ -68,14 +69,14 @@ private:
      *
      * @param input_data_b Bytes-encoded input data.
      *
-     * @return request Request with data to distribute. If error occured, message type is set to ERROR.
+     * @return request Request with data to distribute. If error occurred, message type is set to ERROR.
      */
     kenning_computer_vision_msgs::srv::SegmentCVNodeSrv::Request::SharedPtr
     extract_images(std::vector<uint8_t> &input_data_b);
 
     /**
-     * Broadcasts request asynchronously to all registered CVNode-like nodes.
-     * Sends 'OK' response when received confirmation from all nodes, 'ERROR' otherwise.
+     * Broadcasts request to registered CVNode-like node.
+     * Responses with 'OK' to DataProvider when received confirmation, 'ERROR' otherwise.
      *
      * @param header Header of the service request.
      * @param request Request to broadcast.
@@ -85,8 +86,8 @@ private:
         const kenning_computer_vision_msgs::srv::SegmentCVNodeSrv::Request::SharedPtr request);
 
     /**
-     * Broadcasts request asynchronously to all registered CVNode-like nodes.
-     * Sends 'OK' response when received confirmation from all nodes, 'ERROR' otherwise.
+     * Broadcasts request to registered CVNode-like node.
+     * Responses with 'OK' to DataProvider when received confirmation, 'ERROR' otherwise.
      *
      * @param header Header of the service request.
      * @param request Request to broadcast.
@@ -147,9 +148,9 @@ private:
     }
 
     /**
-     * Aborts futher processing.
+     * Aborts further processing.
      *
-     * Reports error to all the registered CVNode-like nodes.
+     * Reports error to the registered CVNode-like node.
      */
     void abort();
 
@@ -159,17 +160,19 @@ private:
     /// Client to communicate with Kenning
     rclcpp::Service<kenning_computer_vision_msgs::srv::RuntimeProtocolSrv>::SharedPtr dataprovider_service;
 
-    /// Map of registered nodes
-    std::unordered_map<std::string, rclcpp::Client<kenning_computer_vision_msgs::srv::SegmentCVNodeSrv>::SharedPtr>
-        cv_nodes;
+    bool dataprovider_initialized = false;   ///< Flag indicating whether the dataprovider is initialized
+    std::mutex dataprovider_mutex;           ///< Mutex for dataprovider
+    std::condition_variable dataprovider_cv; ///< Condition variable for dataprovider
+
+    /// Registered CVNode-like node
+    std::tuple<std::string, rclcpp::Client<kenning_computer_vision_msgs::srv::SegmentCVNodeSrv>::SharedPtr> cv_node =
+        std::make_tuple("", nullptr);
 
     /// Testing scenario function
     void (CVNodeManager::*inference_scenario_func)(
         const std::shared_ptr<rmw_request_id_t>,
         const kenning_computer_vision_msgs::srv::RuntimeProtocolSrv::Request::SharedPtr) = nullptr;
 
-    bool dataprovider_initialized = false;       ///< Indicates whether the dataprovider is initialized
-    int answer_counter = 0;                      ///< Counter of received answers from the CVNodes
     std::shared_ptr<nlohmann::json> output_json; ///< JSON storing output segmentations
 
 public:
