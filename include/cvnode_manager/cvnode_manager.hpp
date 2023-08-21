@@ -160,6 +160,12 @@ private:
     /// Client to communicate with Kenning
     rclcpp::Service<kenning_computer_vision_msgs::srv::RuntimeProtocolSrv>::SharedPtr dataprovider_service;
 
+    /// Publisher to publish input data
+    rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr input_publisher;
+
+    /// Publisher to publish output data
+    rclcpp::Publisher<kenning_computer_vision_msgs::msg::SegmentationMsg>::SharedPtr output_publisher;
+
     bool dataprovider_initialized = false;   ///< Flag indicating whether the dataprovider is initialized
     std::mutex dataprovider_mutex;           ///< Mutex for dataprovider
     std::condition_variable dataprovider_cv; ///< Condition variable for dataprovider

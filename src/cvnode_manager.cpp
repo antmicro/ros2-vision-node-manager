@@ -25,6 +25,12 @@ CVNodeManager::CVNodeManager(const rclcpp::NodeOptions &options) : Node("cvnode_
     dataprovider_service = create_service<RuntimeProtocolSrv>(
         "node_manager/dataprovider",
         std::bind(&CVNodeManager::dataprovider_callback, this, std::placeholders::_1, std::placeholders::_2));
+
+    // Parameter bool to publish visualizations
+    declare_parameter("publish_visualizations", false);
+
+    input_publisher = create_publisher<sensor_msgs::msg::Image>("node_manager/input_frame", 1);
+    output_publisher = create_publisher<SegmentationMsg>("node_manager/output_segmentations", 1);
 }
 
 void CVNodeManager::dataprovider_callback(
@@ -98,6 +104,13 @@ void CVNodeManager::dataprovider_callback(
             dataprovider_service->send_response(*header, response);
         }
         async_broadcast_request(header, inference_request);
+        if (get_parameter("publish_visualizations").as_bool())
+        {
+            for (auto &image : inference_request->input)
+            {
+                input_publisher->publish(image);
+            }
+        }
         break;
     case STATS:
         // NYI: Implement stats collecting
@@ -159,6 +172,13 @@ void CVNodeManager::synthetic_scenario(
                 }
                 std::string output_string = output_json->dump();
                 runtime_response.response.data = std::vector<uint8_t>(output_string.begin(), output_string.end());
+                if (get_parameter("publish_visualizations").as_bool())
+                {
+                    for (auto &segmentation : response->output)
+                    {
+                        output_publisher->publish(segmentation);
+                    }
+                }
                 return runtime_response;
             });
         break;
