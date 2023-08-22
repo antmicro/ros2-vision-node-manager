@@ -4,6 +4,8 @@
 
 #include <cvnode_manager/cvnode_manager.hpp>
 #include <kenning_computer_vision_msgs/runtime_msg_type.hpp>
+#include <rcl_interfaces/msg/parameter_descriptor.hpp>
+#include <rcl_interfaces/msg/parameter_type.hpp>
 #include <sensor_msgs/msg/image.hpp>
 #include <thread>
 
@@ -26,9 +28,23 @@ CVNodeManager::CVNodeManager(const rclcpp::NodeOptions &options) : Node("cvnode_
         "node_manager/dataprovider",
         std::bind(&CVNodeManager::dataprovider_callback, this, std::placeholders::_1, std::placeholders::_2));
 
-    // Parameter bool to publish visualizations
-    declare_parameter("publish_visualizations", false);
+    rcl_interfaces::msg::ParameterDescriptor descriptor;
 
+    // Parameter bool to publish visualizations
+    descriptor.description = "Publishes input and output data to dedicated topics if set to true";
+    descriptor.additional_constraints = "Must be a boolean value";
+    descriptor.read_only = false;
+    descriptor.type = rcl_interfaces::msg::ParameterType::PARAMETER_BOOL;
+    declare_parameter("publish_visualizations", false, descriptor);
+
+    // Parameter int to set the timeout for the real-world scenarios
+    descriptor.description = "Timeout for the real-world scenarios in milliseconds";
+    descriptor.additional_constraints = "Must be an integer value";
+    descriptor.read_only = false;
+    descriptor.type = rcl_interfaces::msg::ParameterType::PARAMETER_INTEGER;
+    declare_parameter("inference_timeout_ms", 1000, descriptor);
+
+    // Publishers for input and output data
     input_publisher = create_publisher<sensor_msgs::msg::Image>("node_manager/input_frame", 1);
     output_publisher = create_publisher<SegmentationMsg>("node_manager/output_segmentations", 1);
 }
@@ -39,7 +55,7 @@ void CVNodeManager::dataprovider_callback(
 {
 
     RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
-    SegmentCVNodeSrv::Request::SharedPtr inference_request;
+    SegmentCVNodeSrv::Request::SharedPtr inference_request = std::make_shared<SegmentCVNodeSrv::Request>();
     RCLCPP_DEBUG(get_logger(), "Received message (%d) from the dataprovider", request->request.message_type);
     switch (request->request.message_type)
     {
@@ -89,7 +105,6 @@ void CVNodeManager::dataprovider_callback(
         dataprovider_service->send_response(*header, response);
         break;
     case MODEL:
-        inference_request = std::make_shared<SegmentCVNodeSrv::Request>();
         inference_request->message_type = MODEL;
         async_broadcast_request(header, inference_request);
         break;
@@ -99,17 +114,24 @@ void CVNodeManager::dataprovider_callback(
         {
             RCLCPP_DEBUG(get_logger(), "Error while extracting data. Aborting.");
             abort();
-            RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
             response.response.message_type = ERROR;
             dataprovider_service->send_response(*header, response);
         }
-        async_broadcast_request(header, inference_request);
         if (get_parameter("publish_visualizations").as_bool())
         {
             for (auto &image : inference_request->input)
             {
                 input_publisher->publish(image);
             }
+        }
+        if (!cv_node_future.valid())
+        {
+            async_broadcast_request(header, inference_request);
+        }
+        else
+        {
+            response.response.message_type = OK;
+            dataprovider_service->send_response(*header, response);
         }
         break;
     case STATS:
@@ -118,10 +140,56 @@ void CVNodeManager::dataprovider_callback(
         response.response.message_type = ERROR;
         dataprovider_service->send_response(*header, response);
         break;
+    case OUTPUT:
+        output_json->clear();
+        output_json->emplace("output", nlohmann::json::array());
+        if (!cv_node_future.valid())
+        {
+            inference_request->message_type = OUTPUT;
+            async_broadcast_request(
+                header,
+                inference_request,
+                [this](SegmentCVNodeSrv::Response::SharedPtr response) -> RuntimeProtocolSrv::Response
+                {
+                    if (get_parameter("publish_visualizations").as_bool())
+                    {
+                        for (auto &segmentation : response->output)
+                        {
+                            output_publisher->publish(segmentation);
+                        }
+                    }
+                    RuntimeProtocolSrv::Response runtime_response = RuntimeProtocolSrv::Response();
+                    runtime_response.response.message_type = OK;
+                    for (auto &segmentation : response->output)
+                    {
+                        try
+                        {
+                            output_json->at("output").push_back(segmentation_to_json(segmentation));
+                        }
+                        catch (nlohmann::json::exception &e)
+                        {
+                            RCLCPP_ERROR(get_logger(), "Error while parsing output json: %s", e.what());
+                            runtime_response.response.message_type = ERROR;
+                            return runtime_response;
+                        }
+                    }
+                    std::string output_string = output_json->dump();
+                    runtime_response.response.data = std::vector<uint8_t>(output_string.begin(), output_string.end());
+                    return runtime_response;
+                });
+        }
+        else
+        {
+            std::string output_string = output_json->dump();
+            response.response.data = std::vector<uint8_t>(output_string.begin(), output_string.end());
+            response.response.message_type = OK;
+            dataprovider_service->send_response(*header, response);
+        }
+        break;
     default:
         if (inference_scenario_func != nullptr)
         {
-            (this->*inference_scenario_func)(header, request);
+            inference_scenario_func(header, request);
         }
         else
         {
@@ -134,53 +202,111 @@ void CVNodeManager::dataprovider_callback(
     }
 }
 
-void CVNodeManager::synthetic_scenario(
+void CVNodeManager::synthetic_inference_scenario(
     const std::shared_ptr<rmw_request_id_t> header,
     const std::shared_ptr<RuntimeProtocolSrv::Request> request)
 {
     RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
     SegmentCVNodeSrv::Request::SharedPtr inference_request = std::make_shared<SegmentCVNodeSrv::Request>();
-    output_json = std::make_shared<nlohmann::json>();
     switch (request->request.message_type)
     {
     case PROCESS:
         inference_request->message_type = PROCESS;
         async_broadcast_request(header, inference_request);
         break;
-    case OUTPUT:
-        inference_request->message_type = OUTPUT;
-        output_json->emplace("output", nlohmann::json::array());
-        async_broadcast_request(
-            header,
-            inference_request,
-            [this](SegmentCVNodeSrv::Response::SharedPtr response) -> RuntimeProtocolSrv::Response
+    default:
+        RCLCPP_ERROR(get_logger(), "Unsupported message type. Aborting.");
+        abort();
+        response.response.message_type = ERROR;
+        dataprovider_service->send_response(*header, response);
+        break;
+    }
+}
+
+void CVNodeManager::real_world_last_inference_scenario(
+    const std::shared_ptr<rmw_request_id_t> header,
+    const std::shared_ptr<RuntimeProtocolSrv::Request> request)
+{
+    RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
+    switch (request->request.message_type)
+    {
+    case PROCESS:
+        std::thread(
+            [this, header]()
             {
-                RuntimeProtocolSrv::Response runtime_response = RuntimeProtocolSrv::Response();
-                runtime_response.response.message_type = OK;
-                for (auto &segmentation : response->output)
+                RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
+                SegmentCVNodeSrv::Request::SharedPtr inference_request = std::make_shared<SegmentCVNodeSrv::Request>();
+                inference_request->message_type = PROCESS;
+                cv_node_future = std::get<1>(cv_node)->async_send_request(inference_request);
+                if (cv_node_future.wait_for(std::chrono::milliseconds(
+                        get_parameter("inference_timeout_ms").as_int())) == std::future_status::ready)
                 {
-                    try
+                    SegmentCVNodeSrv::Response::SharedPtr inference_response = cv_node_future.get();
+                    if (inference_response->message_type != OK)
                     {
-                        output_json->at("output").push_back(segmentation_to_json(segmentation));
-                    }
-                    catch (nlohmann::json::exception &e)
-                    {
-                        RCLCPP_ERROR(get_logger(), "Error while parsing output json: %s", e.what());
-                        runtime_response.response.message_type = ERROR;
-                        return runtime_response;
+                        RCLCPP_ERROR(get_logger(), "Error while processing data. Aborting.");
+                        abort();
+                        response.response.message_type = ERROR;
+                        dataprovider_service->send_response(*header, response);
+                        return;
                     }
                 }
-                std::string output_string = output_json->dump();
-                runtime_response.response.data = std::vector<uint8_t>(output_string.begin(), output_string.end());
-                if (get_parameter("publish_visualizations").as_bool())
+                // Reset future to make sure that it is not reused
+                cv_node_future = std::future<SegmentCVNodeSrv::Response::SharedPtr>();
+                response.response.message_type = OK;
+                dataprovider_service->send_response(*header, response);
+            })
+            .detach();
+        break;
+    default:
+        RCLCPP_ERROR(get_logger(), "Unsupported message type. Aborting.");
+        abort();
+        response.response.message_type = ERROR;
+        dataprovider_service->send_response(*header, response);
+        break;
+    }
+}
+
+void CVNodeManager::real_world_first_inference_scenario(
+    const std::shared_ptr<rmw_request_id_t> header,
+    const std::shared_ptr<RuntimeProtocolSrv::Request> request)
+{
+    RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
+    switch (request->request.message_type)
+    {
+    case PROCESS:
+        std::thread(
+            [this, header]()
+            {
+                RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
+                if (!cv_node_future.valid())
                 {
-                    for (auto &segmentation : response->output)
-                    {
-                        output_publisher->publish(segmentation);
-                    }
+                    SegmentCVNodeSrv::Request::SharedPtr inference_request =
+                        std::make_shared<SegmentCVNodeSrv::Request>();
+                    inference_request->message_type = PROCESS;
+                    cv_node_future = std::get<1>(cv_node)->async_send_request(inference_request);
                 }
-                return runtime_response;
-            });
+                else
+                {
+                }
+                if (cv_node_future.wait_for(std::chrono::milliseconds(
+                        get_parameter("inference_timeout_ms").as_int())) == std::future_status::ready)
+                {
+                    SegmentCVNodeSrv::Response::SharedPtr inference_response = cv_node_future.get();
+                    if (inference_response->message_type != OK)
+                    {
+                        RCLCPP_ERROR(get_logger(), "Error while processing data. Aborting.");
+                        abort();
+                        response.response.message_type = ERROR;
+                        dataprovider_service->send_response(*header, response);
+                        return;
+                    }
+                    cv_node_future = std::shared_future<SegmentCVNodeSrv::Response::SharedPtr>();
+                }
+                response.response.message_type = OK;
+                dataprovider_service->send_response(*header, response);
+            })
+            .detach();
         break;
     default:
         RCLCPP_ERROR(get_logger(), "Unsupported message type. Aborting.");

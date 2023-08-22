@@ -114,7 +114,27 @@ private:
      * @param header Header of the service request.
      * @param request Request of the service.
      */
-    void synthetic_scenario(
+    void synthetic_inference_scenario(
+        const std::shared_ptr<rmw_request_id_t> header,
+        const kenning_computer_vision_msgs::srv::RuntimeProtocolSrv::Request::SharedPtr request);
+
+    /**
+     * Real-world testing scenario where last request is aborted if new one is received.
+     *
+     * @param header Header of the service request.
+     * @param request Request of the service.
+     */
+    void real_world_last_inference_scenario(
+        const std::shared_ptr<rmw_request_id_t> header,
+        const kenning_computer_vision_msgs::srv::RuntimeProtocolSrv::Request::SharedPtr request);
+
+    /**
+     * Real-world testing scenario where new request is aborted if last one is not finished yet.
+     *
+     * @param header Header of the service request.
+     * @param request Request of the service.
+     */
+    void real_world_first_inference_scenario(
         const std::shared_ptr<rmw_request_id_t> header,
         const kenning_computer_vision_msgs::srv::RuntimeProtocolSrv::Request::SharedPtr request);
 
@@ -174,12 +194,18 @@ private:
     std::tuple<std::string, rclcpp::Client<kenning_computer_vision_msgs::srv::SegmentCVNodeSrv>::SharedPtr> cv_node =
         std::make_tuple("", nullptr);
 
-    /// Testing scenario function
-    void (CVNodeManager::*inference_scenario_func)(
-        const std::shared_ptr<rmw_request_id_t>,
-        const kenning_computer_vision_msgs::srv::RuntimeProtocolSrv::Request::SharedPtr) = nullptr;
+    // Shared future from last request
+    rclcpp::Client<kenning_computer_vision_msgs::srv::SegmentCVNodeSrv>::SharedFuture cv_node_future =
+        rclcpp::Client<kenning_computer_vision_msgs::srv::SegmentCVNodeSrv>::SharedFuture();
 
-    std::shared_ptr<nlohmann::json> output_json; ///< JSON storing output segmentations
+    /// Testing scenario function
+    std::function<void(
+        const std::shared_ptr<rmw_request_id_t>,
+        const kenning_computer_vision_msgs::srv::RuntimeProtocolSrv::Request::SharedPtr)>
+        inference_scenario_func = nullptr;
+
+    /// JSON storing output segmentations
+    std::shared_ptr<nlohmann::json> output_json = std::make_shared<nlohmann::json>();
 
 public:
     /**

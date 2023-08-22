@@ -16,6 +16,7 @@ include_directories(include)
 
 find_package(ament_cmake REQUIRED)
 find_package(kenning_computer_vision_msgs REQUIRED)
+find_package(rcl_interfaces REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_components REQUIRED)
 
@@ -53,6 +54,7 @@ add_library(cvnode_manager SHARED
 
 ament_target_dependencies(cvnode_manager
     "kenning_computer_vision_msgs"
+    "rcl_interfaces"
     "rclcpp"
     "rclcpp_components"
 )
