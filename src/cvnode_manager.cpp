@@ -39,10 +39,17 @@ CVNodeManager::CVNodeManager(const rclcpp::NodeOptions &options) : Node("cvnode_
 
     // Parameter int to set the timeout for the real-world scenarios
     descriptor.description = "Timeout for the real-world scenarios in milliseconds";
-    descriptor.additional_constraints = "Must be an integer value";
+    descriptor.additional_constraints = "Must be an integer value greater than 0";
     descriptor.read_only = false;
     descriptor.type = rcl_interfaces::msg::ParameterType::PARAMETER_INTEGER;
     declare_parameter("inference_timeout_ms", 1000, descriptor);
+
+    // Parameter string to choose testing strategy
+    descriptor.description = "Testing scenario to run";
+    descriptor.additional_constraints = "Must be one of: real_world_last, real_world_first, synthetic";
+    descriptor.read_only = false;
+    descriptor.type = rcl_interfaces::msg::ParameterType::PARAMETER_STRING;
+    declare_parameter("scenario", "synthetic", descriptor);
 
     // Publishers for input and output data
     input_publisher = create_publisher<sensor_msgs::msg::Image>("node_manager/input_frame", 1);
@@ -64,6 +71,42 @@ void CVNodeManager::dataprovider_callback(
         {
             RCLCPP_DEBUG(get_logger(), "Received DataProvider initialization request");
             dataprovider_initialized = true;
+            std::string scenario = get_parameter("scenario").as_string();
+            if (scenario == "synthetic")
+            {
+                RCLCPP_DEBUG(get_logger(), "[SCENARIO] Set to 'Synthetic'");
+                inference_scenario_func = std::bind(
+                    &CVNodeManager::synthetic_inference_scenario,
+                    this,
+                    std::placeholders::_1,
+                    std::placeholders::_2);
+            }
+            else if (scenario == "real_world_last")
+            {
+                RCLCPP_DEBUG(get_logger(), "[SCENARIO] Set to 'Real World Last'");
+                inference_scenario_func = std::bind(
+                    &CVNodeManager::real_world_last_inference_scenario,
+                    this,
+                    std::placeholders::_1,
+                    std::placeholders::_2);
+            }
+            else if (scenario == "real_world_first")
+            {
+                RCLCPP_DEBUG(get_logger(), "[SCENARIO] Set to 'Real World First'");
+                inference_scenario_func = std::bind(
+                    &CVNodeManager::real_world_first_inference_scenario,
+                    this,
+                    std::placeholders::_1,
+                    std::placeholders::_2);
+            }
+            else
+            {
+                RCLCPP_ERROR(get_logger(), "Unknown scenario: %s", scenario.c_str());
+                abort();
+                response.response.message_type = ERROR;
+                dataprovider_service->send_response(*header, response);
+                return;
+            }
             if (std::get<1>(cv_node) == nullptr)
             {
                 std::thread(
@@ -72,8 +115,8 @@ void CVNodeManager::dataprovider_callback(
                         std::unique_lock<std::mutex> lk(dataprovider_mutex);
                         RCLCPP_DEBUG(get_logger(), "Waiting for inference to start");
                         dataprovider_cv.wait(lk);
-                        RCLCPP_DEBUG(get_logger(), "Starting inference");
                         RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
+                        RCLCPP_DEBUG(get_logger(), "Starting inference");
                         response.response.message_type = OK;
                         dataprovider_service->send_response(*header, response);
                     })
