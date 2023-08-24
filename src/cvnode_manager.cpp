@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <cvnode_manager/cvnode_manager.hpp>
-#include <kenning_computer_vision_msgs/runtime_msg_type.hpp>
+#include <kenning_computer_vision_msgs/msg/runtime_msg_type.hpp>
 #include <nlohmann/json.hpp>
 #include <rcl_interfaces/msg/parameter_descriptor.hpp>
 #include <rcl_interfaces/msg/parameter_type.hpp>
@@ -12,11 +12,11 @@
 
 namespace cvnode_manager
 {
-using namespace kenning_computer_vision_msgs::runtime_message_type;
-
-using SegmentCVNodeSrv = kenning_computer_vision_msgs::srv::SegmentCVNodeSrv;
 using ManageCVNode = kenning_computer_vision_msgs::srv::ManageCVNode;
 using RuntimeProtocolSrv = kenning_computer_vision_msgs::srv::RuntimeProtocolSrv;
+using SegmentCVNodeSrv = kenning_computer_vision_msgs::srv::SegmentCVNodeSrv;
+
+using RuntimeMsgType = kenning_computer_vision_msgs::msg::RuntimeMsgType;
 using SegmentationMsg = kenning_computer_vision_msgs::msg::SegmentationMsg;
 
 CVNodeManager::CVNodeManager(const rclcpp::NodeOptions &options) : Node("cvnode_manager", options)
@@ -63,9 +63,9 @@ void CVNodeManager::dataprovider_callback(
 {
     RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
     SegmentCVNodeSrv::Request::SharedPtr inference_request = std::make_shared<SegmentCVNodeSrv::Request>();
-    switch (request->request.message_type)
+    switch (request->message_type)
     {
-    case OK:
+    case RuntimeMsgType::OK:
         if (!dataprovider_initialized)
         {
             initialize_dataprovider(header);
@@ -75,29 +75,29 @@ void CVNodeManager::dataprovider_callback(
             abort(header, "[OK] Received unexpected 'OK' message.");
         }
         break;
-    case ERROR:
+    case RuntimeMsgType::ERROR:
         abort(header, "[ERROR] Received error message from the dataprovider.");
         break;
-    case IOSPEC:
+    case RuntimeMsgType::IOSPEC:
         // IGNORE
-        response.response.message_type = OK;
+        response.message_type = RuntimeMsgType::OK;
         dataprovider_service->send_response(*header, response);
         break;
-    case MODEL:
-        inference_request->message_type = MODEL;
+    case RuntimeMsgType::MODEL:
+        inference_request->message_type = RuntimeMsgType::MODEL;
         async_broadcast_request(header, inference_request);
         break;
-    case DATA:
+    case RuntimeMsgType::DATA:
         forward_data_request(header, request);
         break;
-    case STATS:
+    case RuntimeMsgType::STATS:
         // NYI: Implement stats collecting
         abort(header, "[STATS] Not yet implemented.");
         break;
-    case OUTPUT:
+    case RuntimeMsgType::OUTPUT:
         forward_output_request(header);
         break;
-    case PROCESS:
+    case RuntimeMsgType::PROCESS:
         if (inference_scenario_func != nullptr)
         {
             inference_scenario_func(header);
@@ -108,8 +108,7 @@ void CVNodeManager::dataprovider_callback(
         }
         break;
     default:
-        std::string error_message =
-            "[UNKNOWN] Received unknown message type: " + std::to_string(request->request.message_type);
+        std::string error_message = "[UNKNOWN] Received unknown message type: " + std::to_string(request->message_type);
         abort(header, error_message);
         break;
     }
@@ -134,7 +133,7 @@ void CVNodeManager::initialize_dataprovider(const std::shared_ptr<rmw_request_id
                 dataprovider_cv.wait(lk);
                 RCLCPP_DEBUG(get_logger(), "[DATAPROVIDER] Starting inference");
                 RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
-                response.response.message_type = OK;
+                response.message_type = RuntimeMsgType::OK;
                 dataprovider_service->send_response(*header, response);
             })
             .detach();
@@ -143,7 +142,7 @@ void CVNodeManager::initialize_dataprovider(const std::shared_ptr<rmw_request_id
     {
         RCLCPP_DEBUG(get_logger(), "[DATAPROVIDER] Starting inference");
         RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
-        response.response.message_type = OK;
+        response.message_type = RuntimeMsgType::OK;
         dataprovider_service->send_response(*header, response);
     }
 }
@@ -154,8 +153,8 @@ void CVNodeManager::forward_data_request(
 {
     if (!cv_node_future.valid())
     {
-        SegmentCVNodeSrv::Request::SharedPtr inference_request = extract_images(request->request.data);
-        if (inference_request->message_type == ERROR)
+        SegmentCVNodeSrv::Request::SharedPtr inference_request = extract_images(request->data);
+        if (inference_request->message_type == RuntimeMsgType::ERROR)
         {
             abort(header, "[DATA] Error while extracting data.");
         }
@@ -171,7 +170,7 @@ void CVNodeManager::forward_data_request(
     else
     {
         RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
-        response.response.message_type = OK;
+        response.message_type = RuntimeMsgType::OK;
         dataprovider_service->send_response(*header, response);
     }
 }
@@ -181,7 +180,7 @@ void CVNodeManager::forward_output_request(const std::shared_ptr<rmw_request_id_
     if (!cv_node_future.valid())
     {
         SegmentCVNodeSrv::Request::SharedPtr inference_request = std::make_shared<SegmentCVNodeSrv::Request>();
-        inference_request->message_type = OUTPUT;
+        inference_request->message_type = RuntimeMsgType::OUTPUT;
         async_broadcast_request(
             header,
             inference_request,
@@ -194,8 +193,8 @@ void CVNodeManager::forward_output_request(const std::shared_ptr<rmw_request_id_
         output_data.emplace("output", nlohmann::json::array());
         std::string output_string = output_data.dump();
 
-        response.response.data = std::vector<uint8_t>(output_string.begin(), output_string.end());
-        response.response.message_type = OK;
+        response.data = std::vector<uint8_t>(output_string.begin(), output_string.end());
+        response.message_type = RuntimeMsgType::OK;
         dataprovider_service->send_response(*header, response);
     }
 }
@@ -231,7 +230,7 @@ bool CVNodeManager::set_scenario()
 void CVNodeManager::synthetic_inference_scenario(const std::shared_ptr<rmw_request_id_t> header)
 {
     SegmentCVNodeSrv::Request::SharedPtr inference_request = std::make_shared<SegmentCVNodeSrv::Request>();
-    inference_request->message_type = PROCESS;
+    inference_request->message_type = RuntimeMsgType::PROCESS;
     async_broadcast_request(header, inference_request);
 }
 
@@ -241,13 +240,13 @@ void CVNodeManager::real_world_last_inference_scenario(const std::shared_ptr<rmw
         [this, header]()
         {
             SegmentCVNodeSrv::Request::SharedPtr inference_request = std::make_shared<SegmentCVNodeSrv::Request>();
-            inference_request->message_type = PROCESS;
+            inference_request->message_type = RuntimeMsgType::PROCESS;
             cv_node_future = std::get<1>(cv_node)->async_send_request(inference_request).future.share();
             if (cv_node_future.wait_for(std::chrono::milliseconds(get_parameter("inference_timeout_ms").as_int())) ==
                 std::future_status::ready)
             {
                 SegmentCVNodeSrv::Response::SharedPtr inference_response = cv_node_future.get();
-                if (inference_response->message_type != OK)
+                if (inference_response->message_type != RuntimeMsgType::OK)
                 {
                     abort(header, "[REAL WORLD LAST] Error while processing data.");
                     return;
@@ -257,7 +256,7 @@ void CVNodeManager::real_world_last_inference_scenario(const std::shared_ptr<rmw
             cv_node_future = std::future<SegmentCVNodeSrv::Response::SharedPtr>();
 
             RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
-            response.response.message_type = OK;
+            response.message_type = RuntimeMsgType::OK;
             dataprovider_service->send_response(*header, response);
         })
         .detach();
@@ -272,21 +271,21 @@ void CVNodeManager::real_world_first_inference_scenario(const std::shared_ptr<rm
             if (!cv_node_future.valid())
             {
                 SegmentCVNodeSrv::Request::SharedPtr inference_request = std::make_shared<SegmentCVNodeSrv::Request>();
-                inference_request->message_type = PROCESS;
+                inference_request->message_type = RuntimeMsgType::PROCESS;
                 cv_node_future = std::get<1>(cv_node)->async_send_request(inference_request).future.share();
             }
             if (cv_node_future.wait_for(std::chrono::milliseconds(get_parameter("inference_timeout_ms").as_int())) ==
                 std::future_status::ready)
             {
                 SegmentCVNodeSrv::Response::SharedPtr inference_response = cv_node_future.get();
-                if (inference_response->message_type != OK)
+                if (inference_response->message_type != RuntimeMsgType::OK)
                 {
                     abort(header, "[REAL WORLD FIRST] Error while processing data.");
                     return;
                 }
                 cv_node_future = std::shared_future<SegmentCVNodeSrv::Response::SharedPtr>();
             }
-            response.response.message_type = OK;
+            response.message_type = RuntimeMsgType::OK;
             dataprovider_service->send_response(*header, response);
         })
         .detach();
@@ -334,14 +333,14 @@ CVNodeManager::segmentations_to_output_data(const SegmentCVNodeSrv::Response::Sh
         catch (const nlohmann::json::exception &e)
         {
             RCLCPP_ERROR(get_logger(), "Error while parsing output json: %s", e.what());
-            runtime_response.response.message_type = ERROR;
+            runtime_response.message_type = RuntimeMsgType::ERROR;
             return runtime_response;
         }
     }
     std::string json_string = output_data.dump();
 
-    runtime_response.response.message_type = OK;
-    runtime_response.response.data = std::vector<uint8_t>(json_string.begin(), json_string.end());
+    runtime_response.message_type = RuntimeMsgType::OK;
+    runtime_response.data = std::vector<uint8_t>(json_string.begin(), json_string.end());
     return runtime_response;
 }
 
@@ -354,7 +353,7 @@ void CVNodeManager::async_broadcast_request(
     {
         RCLCPP_ERROR(get_logger(), "No CVNode registered");
         RuntimeProtocolSrv::Response response;
-        response.response.message_type = ERROR;
+        response.message_type = RuntimeMsgType::ERROR;
         dataprovider_service->send_response(*header, response);
     }
 
@@ -363,7 +362,7 @@ void CVNodeManager::async_broadcast_request(
         [this, header, callback](rclcpp::Client<SegmentCVNodeSrv>::SharedFuture future)
         {
             auto response = future.get();
-            if (response->message_type != OK)
+            if (response->message_type != RuntimeMsgType::OK)
             {
                 abort(header, "[BROADCAST] Failed to receive confirmation from the CVNode");
                 return;
@@ -374,13 +373,13 @@ void CVNodeManager::async_broadcast_request(
             {
                 RCLCPP_DEBUG(get_logger(), "[BROADCAST] Executing callback.");
                 dataprovider_response = callback(response);
-                if (dataprovider_response.response.message_type != OK)
+                if (dataprovider_response.message_type != RuntimeMsgType::OK)
                 {
                     abort(header, "[BROADCAST] Failed to process response from the CVNode");
                     return;
                 }
             }
-            dataprovider_response.response.message_type = OK;
+            dataprovider_response.message_type = RuntimeMsgType::OK;
             dataprovider_service->send_response(*header, dataprovider_response);
         });
 }
@@ -397,7 +396,7 @@ SegmentCVNodeSrv::Request::SharedPtr CVNodeManager::extract_images(std::vector<u
         if (data.size() == 0)
         {
             RCLCPP_ERROR(get_logger(), "[EXTRACT IMAGES] Data is empty");
-            request->message_type = ERROR;
+            request->message_type = RuntimeMsgType::ERROR;
             return request;
         }
         for (auto &image : data)
@@ -414,10 +413,10 @@ SegmentCVNodeSrv::Request::SharedPtr CVNodeManager::extract_images(std::vector<u
     catch (nlohmann::json::exception &e)
     {
         RCLCPP_ERROR(get_logger(), "[EXTRACT IMAGES] Error while parsing data json: %s", e.what());
-        request->message_type = ERROR;
+        request->message_type = RuntimeMsgType::ERROR;
         return request;
     }
-    request->message_type = DATA;
+    request->message_type = RuntimeMsgType::DATA;
     return request;
 }
 
@@ -503,8 +502,8 @@ void CVNodeManager::abort(const std::shared_ptr<rmw_request_id_t> header, const 
     RCLCPP_ERROR(get_logger(), "%s", error_msg.c_str());
     SegmentCVNodeSrv::Request::SharedPtr request = std::make_shared<SegmentCVNodeSrv::Request>();
     RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
-    request->message_type = ERROR;
-    response.response.message_type = ERROR;
+    request->message_type = RuntimeMsgType::ERROR;
+    response.message_type = RuntimeMsgType::ERROR;
     std::get<1>(cv_node)->async_send_request(request);
     dataprovider_service->send_response(*header, response);
 }
