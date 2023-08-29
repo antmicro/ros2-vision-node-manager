@@ -100,7 +100,7 @@ void CVNodeManager::dataprovider_callback(
     case RuntimeMsgType::PROCESS:
         if (inference_scenario_func != nullptr)
         {
-            inference_scenario_func(header);
+            std::thread(inference_scenario_func, header).detach();
         }
         else
         {
@@ -244,59 +244,49 @@ void CVNodeManager::synthetic_inference_scenario(const std::shared_ptr<rmw_reque
 
 void CVNodeManager::real_world_last_inference_scenario(const std::shared_ptr<rmw_request_id_t> header)
 {
-    std::thread(
-        [this, header]()
+    SegmentCVNodeSrv::Request::SharedPtr inference_request = std::make_shared<SegmentCVNodeSrv::Request>();
+    inference_request->message_type = RuntimeMsgType::PROCESS;
+    cv_node_future = std::get<1>(cv_node)->async_send_request(inference_request).future.share();
+    if (cv_node_future.wait_for(std::chrono::milliseconds(get_parameter("inference_timeout_ms").as_int())) ==
+        std::future_status::ready)
+    {
+        SegmentCVNodeSrv::Response::SharedPtr inference_response = cv_node_future.get();
+        if (inference_response->message_type != RuntimeMsgType::OK)
         {
-            SegmentCVNodeSrv::Request::SharedPtr inference_request = std::make_shared<SegmentCVNodeSrv::Request>();
-            inference_request->message_type = RuntimeMsgType::PROCESS;
-            cv_node_future = std::get<1>(cv_node)->async_send_request(inference_request).future.share();
-            if (cv_node_future.wait_for(std::chrono::milliseconds(get_parameter("inference_timeout_ms").as_int())) ==
-                std::future_status::ready)
-            {
-                SegmentCVNodeSrv::Response::SharedPtr inference_response = cv_node_future.get();
-                if (inference_response->message_type != RuntimeMsgType::OK)
-                {
-                    abort(header, "[REAL WORLD LAST] Error while processing data.");
-                    return;
-                }
-            }
-            // Reset future to make sure that it is not reused
-            cv_node_future = std::future<SegmentCVNodeSrv::Response::SharedPtr>();
+            abort(header, "[REAL WORLD LAST] Error while processing data.");
+            return;
+        }
+    }
+    // Reset future to make sure that it is not reused
+    cv_node_future = std::future<SegmentCVNodeSrv::Response::SharedPtr>();
 
-            RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
-            response.message_type = RuntimeMsgType::OK;
-            dataprovider_service->send_response(*header, response);
-        })
-        .detach();
+    RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
+    response.message_type = RuntimeMsgType::OK;
+    dataprovider_service->send_response(*header, response);
 }
 
 void CVNodeManager::real_world_first_inference_scenario(const std::shared_ptr<rmw_request_id_t> header)
 {
-    std::thread(
-        [this, header]()
+    RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
+    if (!cv_node_future.valid())
+    {
+        SegmentCVNodeSrv::Request::SharedPtr inference_request = std::make_shared<SegmentCVNodeSrv::Request>();
+        inference_request->message_type = RuntimeMsgType::PROCESS;
+        cv_node_future = std::get<1>(cv_node)->async_send_request(inference_request).future.share();
+    }
+    if (cv_node_future.wait_for(std::chrono::milliseconds(get_parameter("inference_timeout_ms").as_int())) ==
+        std::future_status::ready)
+    {
+        SegmentCVNodeSrv::Response::SharedPtr inference_response = cv_node_future.get();
+        if (inference_response->message_type != RuntimeMsgType::OK)
         {
-            RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
-            if (!cv_node_future.valid())
-            {
-                SegmentCVNodeSrv::Request::SharedPtr inference_request = std::make_shared<SegmentCVNodeSrv::Request>();
-                inference_request->message_type = RuntimeMsgType::PROCESS;
-                cv_node_future = std::get<1>(cv_node)->async_send_request(inference_request).future.share();
-            }
-            if (cv_node_future.wait_for(std::chrono::milliseconds(get_parameter("inference_timeout_ms").as_int())) ==
-                std::future_status::ready)
-            {
-                SegmentCVNodeSrv::Response::SharedPtr inference_response = cv_node_future.get();
-                if (inference_response->message_type != RuntimeMsgType::OK)
-                {
-                    abort(header, "[REAL WORLD FIRST] Error while processing data.");
-                    return;
-                }
-                cv_node_future = std::shared_future<SegmentCVNodeSrv::Response::SharedPtr>();
-            }
-            response.message_type = RuntimeMsgType::OK;
-            dataprovider_service->send_response(*header, response);
-        })
-        .detach();
+            abort(header, "[REAL WORLD FIRST] Error while processing data.");
+            return;
+        }
+        cv_node_future = std::shared_future<SegmentCVNodeSrv::Response::SharedPtr>();
+    }
+    response.message_type = RuntimeMsgType::OK;
+    dataprovider_service->send_response(*header, response);
 }
 
 RuntimeProtocolSrv::Response
