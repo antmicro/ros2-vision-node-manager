@@ -4,7 +4,6 @@
 
 #include <cvnode_manager/cvnode_manager.hpp>
 #include <kenning_computer_vision_msgs/msg/runtime_msg_type.hpp>
-#include <nlohmann/json.hpp>
 #include <rcl_interfaces/msg/parameter_descriptor.hpp>
 #include <rcl_interfaces/msg/parameter_type.hpp>
 #include <sensor_msgs/msg/image.hpp>
@@ -63,6 +62,7 @@ void CVNodeManager::dataprovider_callback(
 {
     RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
     SegmentCVNodeSrv::Request::SharedPtr inference_request = std::make_shared<SegmentCVNodeSrv::Request>();
+    std::string data;
     switch (request->message_type)
     {
     case RuntimeMsgType::OK:
@@ -91,8 +91,10 @@ void CVNodeManager::dataprovider_callback(
         forward_data_request(header, request);
         break;
     case RuntimeMsgType::STATS:
-        // NYI: Implement stats collecting
-        abort(header, "[STATS] Not yet implemented.");
+        data = measurements.dump();
+        response.data = std::vector<uint8_t>(data.begin(), data.end());
+        response.message_type = RuntimeMsgType::OK;
+        dataprovider_service->send_response(*header, response);
         break;
     case RuntimeMsgType::OUTPUT:
         forward_output_request(header);
@@ -108,8 +110,8 @@ void CVNodeManager::dataprovider_callback(
         }
         break;
     default:
-        std::string error_message = "[UNKNOWN] Received unknown message type: " + std::to_string(request->message_type);
-        abort(header, error_message);
+        data = "[UNKNOWN] Received unknown message type: " + std::to_string(request->message_type);
+        abort(header, data);
         break;
     }
 }
@@ -122,6 +124,10 @@ void CVNodeManager::initialize_dataprovider(const std::shared_ptr<rmw_request_id
         abort(header, "[OK] Error while setting scenario.");
         return;
     }
+
+    measurements = nlohmann::json();
+    measurements.emplace("target_inference_step", nlohmann::json::array());
+    measurements.emplace("target_inference_step_timestamp", nlohmann::json::array());
 
     if (std::get<1>(cv_node) == nullptr)
     {
@@ -237,17 +243,47 @@ bool CVNodeManager::set_scenario()
 
 void CVNodeManager::synthetic_inference_scenario(const std::shared_ptr<rmw_request_id_t> header)
 {
+    using namespace std::chrono;
+
     SegmentCVNodeSrv::Request::SharedPtr inference_request = std::make_shared<SegmentCVNodeSrv::Request>();
     inference_request->message_type = RuntimeMsgType::PROCESS;
-    async_broadcast_request(header, inference_request);
+
+    /// Send inference request
+    start = steady_clock::now();
+    cv_node_future = std::get<1>(cv_node)->async_send_request(inference_request).future.share();
+    cv_node_future.wait();
+    SegmentCVNodeSrv::Response::SharedPtr inference_response = cv_node_future.get();
+
+    // Measure inference time
+    end = steady_clock::now();
+    float duration = duration_cast<milliseconds>(end - start).count() / 1000.0;
+    measurements.at("target_inference_step").push_back(duration);
+    measurements.at("target_inference_step_timestamp")
+        .push_back(duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count() / 1000.0);
+
+    // Reset future
+    cv_node_future = std::shared_future<SegmentCVNodeSrv::Response::SharedPtr>();
+    if (inference_response->message_type != RuntimeMsgType::OK)
+    {
+        abort(header, "[SYNTHETIC] Error while processing data.");
+        return;
+    }
+    RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
+    response.message_type = RuntimeMsgType::OK;
+    dataprovider_service->send_response(*header, response);
 }
 
 void CVNodeManager::real_world_last_inference_scenario(const std::shared_ptr<rmw_request_id_t> header)
 {
+    using namespace std::chrono;
+
     SegmentCVNodeSrv::Request::SharedPtr inference_request = std::make_shared<SegmentCVNodeSrv::Request>();
     inference_request->message_type = RuntimeMsgType::PROCESS;
+
+    /// Send inference request
+    start = steady_clock::now();
     cv_node_future = std::get<1>(cv_node)->async_send_request(inference_request).future.share();
-    if (cv_node_future.wait_for(std::chrono::milliseconds(get_parameter("inference_timeout_ms").as_int())) ==
+    if (cv_node_future.wait_for(milliseconds(get_parameter("inference_timeout_ms").as_int())) ==
         std::future_status::ready)
     {
         SegmentCVNodeSrv::Response::SharedPtr inference_response = cv_node_future.get();
@@ -257,6 +293,14 @@ void CVNodeManager::real_world_last_inference_scenario(const std::shared_ptr<rmw
             return;
         }
     }
+
+    // Measure inference time
+    end = steady_clock::now();
+    float duration = duration_cast<milliseconds>(end - start).count() / 1000.0;
+    measurements.at("target_inference_step").push_back(duration);
+    measurements.at("target_inference_step_timestamp")
+        .push_back(duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count() / 1000.0);
+
     // Reset future to make sure that it is not reused
     cv_node_future = std::future<SegmentCVNodeSrv::Response::SharedPtr>();
 
@@ -267,17 +311,25 @@ void CVNodeManager::real_world_last_inference_scenario(const std::shared_ptr<rmw
 
 void CVNodeManager::real_world_first_inference_scenario(const std::shared_ptr<rmw_request_id_t> header)
 {
+    using namespace std::chrono;
+
     RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
     if (!cv_node_future.valid())
     {
         SegmentCVNodeSrv::Request::SharedPtr inference_request = std::make_shared<SegmentCVNodeSrv::Request>();
         inference_request->message_type = RuntimeMsgType::PROCESS;
+        start = steady_clock::now();
         cv_node_future = std::get<1>(cv_node)->async_send_request(inference_request).future.share();
     }
-    if (cv_node_future.wait_for(std::chrono::milliseconds(get_parameter("inference_timeout_ms").as_int())) ==
+    if (cv_node_future.wait_for(milliseconds(get_parameter("inference_timeout_ms").as_int())) ==
         std::future_status::ready)
     {
         SegmentCVNodeSrv::Response::SharedPtr inference_response = cv_node_future.get();
+        end = steady_clock::now();
+        float duration = duration_cast<milliseconds>(end - start).count() / 1000.0;
+        measurements.at("target_inference_step").push_back(duration);
+        measurements.at("target_inference_step_timestamp")
+            .push_back(duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count() / 1000.0);
         if (inference_response->message_type != RuntimeMsgType::OK)
         {
             abort(header, "[REAL WORLD FIRST] Error while processing data.");

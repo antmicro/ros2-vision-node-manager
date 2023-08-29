@@ -5,6 +5,7 @@
 #pragma once
 
 #include <mutex>
+#include <nlohmann/json.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <string>
 #include <unordered_map>
@@ -216,6 +217,9 @@ private:
     /// Testing scenario function
     std::function<void(const std::shared_ptr<rmw_request_id_t>)> inference_scenario_func = nullptr;
 
+    nlohmann::json measurements = nlohmann::json(); ///< Measurements from inference
+    std::chrono::steady_clock::time_point start;    ///< Start time of the inference
+    std::chrono::steady_clock::time_point end;      ///< End time of the inference
 public:
     /**
      * Constructor.
