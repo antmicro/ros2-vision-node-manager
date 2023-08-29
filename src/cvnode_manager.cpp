@@ -151,19 +151,27 @@ void CVNodeManager::forward_data_request(
     const std::shared_ptr<rmw_request_id_t> header,
     const RuntimeProtocolSrv::Request::SharedPtr request)
 {
+    SegmentCVNodeSrv::Request::SharedPtr inference_request;
+    bool publish = get_parameter("publish_visualizations").as_bool();
+
+    if (publish || !cv_node_future.valid())
+    {
+        inference_request = extract_images(request->data);
+    }
+
+    if (publish)
+    {
+        for (auto &image : inference_request->input)
+        {
+            input_publisher->publish(image);
+        }
+    }
+
     if (!cv_node_future.valid())
     {
-        SegmentCVNodeSrv::Request::SharedPtr inference_request = extract_images(request->data);
         if (inference_request->message_type == RuntimeMsgType::ERROR)
         {
             abort(header, "[DATA] Error while extracting data.");
-        }
-        if (get_parameter("publish_visualizations").as_bool())
-        {
-            for (auto &image : inference_request->input)
-            {
-                input_publisher->publish(image);
-            }
         }
         async_broadcast_request(header, inference_request);
     }
