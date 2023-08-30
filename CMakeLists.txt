@@ -12,6 +12,8 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
+option(BUILD_GUI "Builds GUI for input and output data visualization" OFF)
+
 include_directories(include)
 
 find_package(ament_cmake REQUIRED)
@@ -48,22 +50,62 @@ endif()
 
 #############
 
-add_library(cvnode_manager SHARED
+add_library(${PROJECT_NAME} SHARED
     src/cvnode_manager.cpp
 )
 
-ament_target_dependencies(cvnode_manager
-    "kenning_computer_vision_msgs"
-    "rcl_interfaces"
-    "rclcpp"
-    "rclcpp_components"
+ament_target_dependencies(${PROJECT_NAME}
+    kenning_computer_vision_msgs
+    rcl_interfaces
+    rclcpp
+    rclcpp_components
 )
 
-rclcpp_components_register_nodes(cvnode_manager "cvnode_manager::CVNodeManager")
+rclcpp_components_register_nodes(${PROJECT_NAME} "cvnode_manager::CVNodeManager")
 
-target_link_libraries(cvnode_manager
+target_link_libraries(${PROJECT_NAME}
     nlohmann_json::nlohmann_json
 )
+
+#############
+
+if (BUILD_GUI)
+    if(NOT gui_node_FOUND)
+        message("gui_node not found - building it")
+        include(FetchContent)
+        FetchContent_Declare(gui_node
+            GIT_REPOSITORY https://github.com/antmicro/ros2-gui-node
+            GIT_TAG main
+        )
+        FetchContent_MakeAvailable(gui_node)
+    endif()
+
+    find_package(OpenCV REQUIRED)
+
+    add_library(${PROJECT_NAME}_gui SHARED
+        src/cvnode_manager_gui.cpp
+    )
+
+    target_link_libraries(${PROJECT_NAME}_gui
+        gui_node
+        ${OpenCV_LIBS}
+    )
+
+    ament_target_dependencies(${PROJECT_NAME}_gui
+        kenning_computer_vision_msgs
+        rclcpp
+        rclcpp_components
+    )
+
+    rclcpp_components_register_nodes(${PROJECT_NAME}_gui "cvnode_manager::gui::CVNodeManagerGUI")
+
+    install(TARGETS
+        ${PROJECT_NAME}_gui
+        ARCHIVE DESTINATION lib
+        LIBRARY DESTINATION lib
+        RUNTIME DESTINATION bin
+    )
+endif(BUILD_GUI)
 
 #############
 
