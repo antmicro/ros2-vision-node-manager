@@ -51,6 +51,13 @@ CVNodeManager::CVNodeManager(const rclcpp::NodeOptions &options) : Node("cvnode_
     descriptor.type = rcl_interfaces::msg::ParameterType::PARAMETER_STRING;
     declare_parameter("scenario", "synthetic", descriptor);
 
+    // Parameter bool to preserve last output
+    descriptor.description = "Preserve last output";
+    descriptor.additional_constraints = "Must be a boolean value";
+    descriptor.read_only = false;
+    descriptor.type = rcl_interfaces::msg::ParameterType::PARAMETER_BOOL;
+    declare_parameter("preserve_output", true, descriptor);
+
     // Publishers for input and output data
     input_publisher = create_publisher<sensor_msgs::msg::Image>("node_manager/input_frame", 1);
     output_publisher = create_publisher<SegmentationMsg>("node_manager/output_segmentations", 1);
@@ -124,6 +131,9 @@ void CVNodeManager::initialize_dataprovider(const std::shared_ptr<rmw_request_id
         abort(header, "[OK] Error while setting scenario.");
         return;
     }
+
+    output_data = nlohmann::json();
+    output_data.emplace("output", nlohmann::json::array());
 
     measurements = nlohmann::json();
     measurements.emplace("target_inference_step", nlohmann::json::array());
@@ -203,8 +213,11 @@ void CVNodeManager::forward_output_request(const std::shared_ptr<rmw_request_id_
     else
     {
         RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
-        nlohmann::json output_data = nlohmann::json();
-        output_data.emplace("output", nlohmann::json::array());
+        if (!get_parameter("preserve_output").as_bool())
+        {
+            output_data = nlohmann::json();
+            output_data.emplace("output", nlohmann::json::array());
+        }
         std::string output_string = output_data.dump();
 
         response.data = std::vector<uint8_t>(output_string.begin(), output_string.end());
@@ -346,46 +359,54 @@ CVNodeManager::segmentations_to_output_data(const SegmentCVNodeSrv::Response::Sh
 {
     bool publish = get_parameter("publish_visualizations").as_bool();
     RuntimeProtocolSrv::Response runtime_response = RuntimeProtocolSrv::Response();
-    nlohmann::json output_data = nlohmann::json();
-    output_data.emplace("output", nlohmann::json::array());
-
-    for (auto &segmentation : response->output)
+    if (!response->output.empty() || get_parameter("scenario").as_string() == "synthetic")
     {
-        if (publish)
-        {
-            output_publisher->publish(segmentation);
-        }
+        output_data = nlohmann::json();
+        output_data.emplace("output", nlohmann::json::array());
 
-        nlohmann::json json = nlohmann::json::array();
-        for (size_t i = 0; i < segmentation.classes.size(); i++)
+        for (auto &segmentation : response->output)
         {
-            nlohmann::json object;
-            nlohmann::json mask;
-            nlohmann::json bbox;
-            object.emplace("class", segmentation.classes[i]);
-            object.emplace("score", segmentation.scores[i]);
-            // NOTE: Attaching mask takes a lot of time (may take seconds, depending on amount and resolution)
-            mask.emplace("dimensions", segmentation.masks[i].dimension);
-            mask.emplace("data", segmentation.masks[i].data);
-            object.emplace("mask", mask);
-            bbox.emplace("xmin", segmentation.boxes[i].xmin);
-            bbox.emplace("ymin", segmentation.boxes[i].ymin);
-            bbox.emplace("xmax", segmentation.boxes[i].xmax);
-            bbox.emplace("ymax", segmentation.boxes[i].ymax);
-            object.emplace("box", bbox);
-            json.push_back(object);
-        }
+            if (publish)
+            {
+                output_publisher->publish(segmentation);
+            }
 
-        try
-        {
-            output_data.at("output").push_back(json);
+            nlohmann::json json = nlohmann::json::array();
+            for (size_t i = 0; i < segmentation.classes.size(); i++)
+            {
+                nlohmann::json object;
+                nlohmann::json mask;
+                nlohmann::json bbox;
+                object.emplace("class", segmentation.classes[i]);
+                object.emplace("score", segmentation.scores[i]);
+                // NOTE: Attaching mask takes a lot of time (may take seconds, depending on amount and resolution)
+                mask.emplace("dimensions", segmentation.masks[i].dimension);
+                mask.emplace("data", segmentation.masks[i].data);
+                object.emplace("mask", mask);
+                bbox.emplace("xmin", segmentation.boxes[i].xmin);
+                bbox.emplace("ymin", segmentation.boxes[i].ymin);
+                bbox.emplace("xmax", segmentation.boxes[i].xmax);
+                bbox.emplace("ymax", segmentation.boxes[i].ymax);
+                object.emplace("box", bbox);
+                json.push_back(object);
+            }
+
+            try
+            {
+                output_data.at("output").push_back(json);
+            }
+            catch (const nlohmann::json::exception &e)
+            {
+                RCLCPP_ERROR(get_logger(), "Error while parsing output json: %s", e.what());
+                runtime_response.message_type = RuntimeMsgType::ERROR;
+                return runtime_response;
+            }
         }
-        catch (const nlohmann::json::exception &e)
-        {
-            RCLCPP_ERROR(get_logger(), "Error while parsing output json: %s", e.what());
-            runtime_response.message_type = RuntimeMsgType::ERROR;
-            return runtime_response;
-        }
+    }
+    else if (!get_parameter("preserve_output").as_bool())
+    {
+        output_data = nlohmann::json();
+        output_data.emplace("output", nlohmann::json::array());
     }
     std::string json_string = output_data.dump();
 
