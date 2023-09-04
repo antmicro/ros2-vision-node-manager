@@ -80,7 +80,11 @@ private:
                     instance_segmentation_msg->masks[i].data.data());
                 cv::resize(mask, mask, cv::Size(width, height));
                 cv::cvtColor(mask, mask, cv::COLOR_GRAY2BGR);
-                mask.setTo(colors[color_idx], mask);
+                cv::Scalar cv_color = cv::Scalar(
+                    im_colors[color_idx].Value.z * 255,
+                    im_colors[color_idx].Value.y * 255,
+                    im_colors[color_idx].Value.x * 255);
+                mask.setTo(cv_color, mask);
                 cv::addWeighted(mask, 0.4, frame, 1.0, 0, frame);
             }
         }
@@ -88,7 +92,7 @@ private:
     }
 
     /// ImGui color definitions
-    std::vector<ImColor> im_colors{
+    const std::vector<ImColor> im_colors{
         ImColor(ImVec4(0.96f, 0.26f, 0.21f, 1.0f)),
         ImColor(ImVec4(0.91f, 0.12f, 0.39f, 1.0f)),
         ImColor(ImVec4(0.61f, 0.15f, 0.69f, 1.0f)),
@@ -108,28 +112,6 @@ private:
         ImColor(ImVec4(0.47f, 0.33f, 0.28f, 1.0f)),
         ImColor(ImVec4(0.62f, 0.62f, 0.62f, 1.0f)),
         ImColor(ImVec4(0.38f, 0.49f, 0.55f, 1.0f))};
-
-    /// OpenCV color definitions
-    std::vector<cv::Scalar> colors = {
-        cv::Scalar(54, 67, 244),
-        cv::Scalar(99, 30, 233),
-        cv::Scalar(176, 39, 156),
-        cv::Scalar(183, 58, 103),
-        cv::Scalar(181, 81, 63),
-        cv::Scalar(243, 150, 33),
-        cv::Scalar(244, 169, 3),
-        cv::Scalar(212, 188, 0),
-        cv::Scalar(136, 150, 0),
-        cv::Scalar(80, 175, 76),
-        cv::Scalar(74, 195, 139),
-        cv::Scalar(57, 220, 205),
-        cv::Scalar(59, 235, 255),
-        cv::Scalar(7, 193, 255),
-        cv::Scalar(0, 152, 255),
-        cv::Scalar(34, 87, 255),
-        cv::Scalar(72, 85, 121),
-        cv::Scalar(158, 158, 158),
-        cv::Scalar(139, 125, 96)};
 
 public:
     CVNodeManagerGUI(const rclcpp::NodeOptions &options)
