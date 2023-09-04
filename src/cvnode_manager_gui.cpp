@@ -24,8 +24,9 @@ namespace gui
 
 using namespace gui_node;
 
-using RosSegmentationSubscriberData =
-    RosSubscriberData<kenning_computer_vision_msgs::msg::SegmentationMsg, kenning_computer_vision_msgs::msg::SegmentationMsg::SharedPtr>;
+using SegmentationMsg = kenning_computer_vision_msgs::msg::SegmentationMsg;
+
+using RosSegmentationSubscriberData = RosSubscriberData<SegmentationMsg, SegmentationMsg::SharedPtr>;
 using MsgImageSharedPtr = sensor_msgs::msg::Image::SharedPtr;
 using RosImageSubscriberData = RosSubscriberData<sensor_msgs::msg::Image, sensor_msgs::msg::Image::SharedPtr>;
 
@@ -44,7 +45,7 @@ private:
      * @return sensor_msgs::msg::Image The image to display.
      */
     sensor_msgs::msg::Image prep_display(
-        kenning_computer_vision_msgs::msg::SegmentationMsg::SharedPtr instance_segmentation_msg,
+        SegmentationMsg::SharedPtr instance_segmentation_msg,
         std::vector<BoundingBox> &bounding_boxes,
         const std::string &filterclass,
         const float &threshold)
@@ -136,11 +137,11 @@ public:
         gui_node_ptr = std::make_shared<GuiNode>(options, "gui_node");
 
         // Widget to display instance segmentations
-        std::shared_ptr<RosSegmentationSubscriberData> subscriber_instance_segmentation = std::make_shared<RosSegmentationSubscriberData>(
-            gui_node_ptr,
-            "node_manager/output_segmentations",
-            [](const kenning_computer_vision_msgs::msg::SegmentationMsg::SharedPtr msg) -> kenning_computer_vision_msgs::msg::SegmentationMsg::SharedPtr
-            { return msg; });
+        std::shared_ptr<RosSegmentationSubscriberData> subscriber_instance_segmentation =
+            std::make_shared<RosSegmentationSubscriberData>(
+                gui_node_ptr,
+                "output_segmentations",
+                [](const SegmentationMsg::SharedPtr msg) -> SegmentationMsg::SharedPtr { return msg; });
         gui_node_ptr->addRosData("output_subscriber", subscriber_instance_segmentation);
 
         std::shared_ptr<DetectionWidget> instance_segmentation_widget = std::make_shared<DetectionWidget>(
@@ -156,7 +157,7 @@ public:
             {
                 std::shared_ptr<RosSegmentationSubscriberData> subscriber_instance_segmentation =
                     gui_node_ptr->getRosData("output_subscriber")->as<RosSegmentationSubscriberData>();
-                kenning_computer_vision_msgs::msg::SegmentationMsg::SharedPtr instance_segmentation_msg = subscriber_instance_segmentation->getData();
+                SegmentationMsg::SharedPtr instance_segmentation_msg = subscriber_instance_segmentation->getData();
 
                 msg = prep_display(instance_segmentation_msg, boxes, filterclass, threshold);
             });
@@ -165,7 +166,7 @@ public:
         // Create a widget to display the video stream
         std::shared_ptr<RosImageSubscriberData> subscriber_video = std::make_shared<RosImageSubscriberData>(
             gui_node_ptr,
-            "node_manager/input_frame",
+            "input_frame",
             [](const MsgImageSharedPtr msg) -> MsgImageSharedPtr { return msg; });
         gui_node_ptr->addRosData("input_subscriber", subscriber_video);
 
@@ -190,9 +191,8 @@ public:
     }
 };
 
-
 } // namespace gui
-} // namespace cv_node_manager
+} // namespace cvnode_manager
 
 #include "rclcpp_components/register_node_macro.hpp"
 

@@ -11,12 +11,8 @@
 
 namespace cvnode_manager
 {
-using ManageCVNode = kenning_computer_vision_msgs::srv::ManageCVNode;
-using RuntimeProtocolSrv = kenning_computer_vision_msgs::srv::RuntimeProtocolSrv;
-using SegmentCVNodeSrv = kenning_computer_vision_msgs::srv::SegmentCVNodeSrv;
 
 using RuntimeMsgType = kenning_computer_vision_msgs::msg::RuntimeMsgType;
-using SegmentationMsg = kenning_computer_vision_msgs::msg::SegmentationMsg;
 
 CVNodeManager::CVNodeManager(const rclcpp::NodeOptions &options) : Node("cvnode_manager", options)
 {
@@ -59,8 +55,8 @@ CVNodeManager::CVNodeManager(const rclcpp::NodeOptions &options) : Node("cvnode_
     declare_parameter("preserve_output", true, descriptor);
 
     // Publishers for input and output data
-    input_publisher = create_publisher<sensor_msgs::msg::Image>("node_manager/input_frame", 1);
-    output_publisher = create_publisher<SegmentationMsg>("node_manager/output_segmentations", 1);
+    gui_input_publisher = create_publisher<sensor_msgs::msg::Image>("input_frame", 1);
+    gui_output_publisher = create_publisher<SegmentationMsg>("output_segmentations", 1);
 }
 
 void CVNodeManager::dataprovider_callback(
@@ -126,7 +122,7 @@ void CVNodeManager::dataprovider_callback(
 void CVNodeManager::initialize_dataprovider(const std::shared_ptr<rmw_request_id_t> header)
 {
     dataprovider_initialized = true;
-    if (!set_scenario())
+    if (!configure_scenario())
     {
         abort(header, "[OK] Error while setting scenario.");
         return;
@@ -144,9 +140,10 @@ void CVNodeManager::initialize_dataprovider(const std::shared_ptr<rmw_request_id
         std::thread(
             [this, header]()
             {
+                std::mutex dataprovider_mutex;
                 std::unique_lock<std::mutex> lk(dataprovider_mutex);
                 RCLCPP_DEBUG(get_logger(), "[DATAPROVIDER] Waiting for inference to start");
-                dataprovider_cv.wait(lk);
+                cvnode_wait_cv.wait(lk);
                 RCLCPP_DEBUG(get_logger(), "[DATAPROVIDER] Starting inference");
                 RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
                 response.message_type = RuntimeMsgType::OK;
@@ -179,7 +176,7 @@ void CVNodeManager::forward_data_request(
     {
         for (auto &image : inference_request->input)
         {
-            input_publisher->publish(image);
+            gui_input_publisher->publish(image);
         }
     }
 
@@ -226,25 +223,26 @@ void CVNodeManager::forward_output_request(const std::shared_ptr<rmw_request_id_
     }
 }
 
-bool CVNodeManager::set_scenario()
+bool CVNodeManager::configure_scenario()
 {
     std::string scenario = get_parameter("scenario").as_string();
     if (scenario == "synthetic")
     {
         RCLCPP_DEBUG(get_logger(), "[SCENARIO] Set to 'Synthetic'");
-        inference_scenario_func = std::bind(&CVNodeManager::synthetic_inference_scenario, this, std::placeholders::_1);
+        inference_scenario_func =
+            std::bind(&CVNodeManager::execute_synthetic_inference_scenario, this, std::placeholders::_1);
     }
     else if (scenario == "real_world_last")
     {
         RCLCPP_DEBUG(get_logger(), "[SCENARIO] Set to 'Real World Last'");
         inference_scenario_func =
-            std::bind(&CVNodeManager::real_world_last_inference_scenario, this, std::placeholders::_1);
+            std::bind(&CVNodeManager::execute_real_world_last_inference_scenario, this, std::placeholders::_1);
     }
     else if (scenario == "real_world_first")
     {
         RCLCPP_DEBUG(get_logger(), "[SCENARIO] Set to 'Real World First'");
         inference_scenario_func =
-            std::bind(&CVNodeManager::real_world_first_inference_scenario, this, std::placeholders::_1);
+            std::bind(&CVNodeManager::execute_real_world_first_inference_scenario, this, std::placeholders::_1);
     }
     else
     {
@@ -254,7 +252,7 @@ bool CVNodeManager::set_scenario()
     return true;
 }
 
-void CVNodeManager::synthetic_inference_scenario(const std::shared_ptr<rmw_request_id_t> header)
+void CVNodeManager::execute_synthetic_inference_scenario(const std::shared_ptr<rmw_request_id_t> header)
 {
     using namespace std::chrono;
 
@@ -286,7 +284,7 @@ void CVNodeManager::synthetic_inference_scenario(const std::shared_ptr<rmw_reque
     dataprovider_service->send_response(*header, response);
 }
 
-void CVNodeManager::real_world_last_inference_scenario(const std::shared_ptr<rmw_request_id_t> header)
+void CVNodeManager::execute_real_world_last_inference_scenario(const std::shared_ptr<rmw_request_id_t> header)
 {
     using namespace std::chrono;
 
@@ -322,7 +320,7 @@ void CVNodeManager::real_world_last_inference_scenario(const std::shared_ptr<rmw
     dataprovider_service->send_response(*header, response);
 }
 
-void CVNodeManager::real_world_first_inference_scenario(const std::shared_ptr<rmw_request_id_t> header)
+void CVNodeManager::execute_real_world_first_inference_scenario(const std::shared_ptr<rmw_request_id_t> header)
 {
     using namespace std::chrono;
 
@@ -368,7 +366,7 @@ CVNodeManager::segmentations_to_output_data(const SegmentCVNodeSrv::Response::Sh
         {
             if (publish)
             {
-                output_publisher->publish(segmentation);
+                gui_output_publisher->publish(segmentation);
             }
 
             nlohmann::json json = nlohmann::json::array();
@@ -545,7 +543,7 @@ void CVNodeManager::register_node_callback(
 
     if (dataprovider_initialized)
     {
-        dataprovider_cv.notify_one();
+        cvnode_wait_cv.notify_one();
     }
     RCLCPP_DEBUG(get_logger(), "The node '%s' is registered", node_name.c_str());
 }

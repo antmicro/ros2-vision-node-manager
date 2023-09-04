@@ -88,6 +88,7 @@ if (BUILD_GUI)
 
     target_link_libraries(${PROJECT_NAME}_gui
         gui_node
+        gui_node_core_widgets
         ${OpenCV_LIBS}
     )
 

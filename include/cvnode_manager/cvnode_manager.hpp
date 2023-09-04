@@ -18,6 +18,11 @@
 namespace cvnode_manager
 {
 
+using ManageCVNode = kenning_computer_vision_msgs::srv::ManageCVNode;
+using RuntimeProtocolSrv = kenning_computer_vision_msgs::srv::RuntimeProtocolSrv;
+using SegmentCVNodeSrv = kenning_computer_vision_msgs::srv::SegmentCVNodeSrv;
+using SegmentationMsg = kenning_computer_vision_msgs::msg::SegmentationMsg;
+
 /**
  * Node to manage testing process of the computer vision system.
  */
@@ -30,9 +35,8 @@ private:
      * @param request Request of the service for registering the node.
      * @param response Response of the service for registering the node.
      */
-    void manage_node_callback(
-        const kenning_computer_vision_msgs::srv::ManageCVNode::Request::SharedPtr request,
-        kenning_computer_vision_msgs::srv::ManageCVNode::Response::SharedPtr response);
+    void
+    manage_node_callback(const ManageCVNode::Request::SharedPtr request, ManageCVNode::Response::SharedPtr response);
 
     /**
      * Callback for the service to register the CVNode-like node.
@@ -40,9 +44,8 @@ private:
      * @param request Request of the service for registering the node.
      * @param response Response of the service for registering the node.
      */
-    void register_node_callback(
-        const kenning_computer_vision_msgs::srv::ManageCVNode::Request::SharedPtr request,
-        kenning_computer_vision_msgs::srv::ManageCVNode::Response::SharedPtr response);
+    void
+    register_node_callback(const ManageCVNode::Request::SharedPtr request, ManageCVNode::Response::SharedPtr response);
 
     /**
      * Callback for the service to unregister the CVNode-like node.
@@ -51,8 +54,8 @@ private:
      * @param response Response of the service for unregistering the node.
      */
     void unregister_node_callback(
-        const kenning_computer_vision_msgs::srv::ManageCVNode::Request::SharedPtr request,
-        [[maybe_unused]] kenning_computer_vision_msgs::srv::ManageCVNode::Response::SharedPtr response);
+        const ManageCVNode::Request::SharedPtr request,
+        [[maybe_unused]] ManageCVNode::Response::SharedPtr response);
 
     /**
      * Callback for communication with DataProvider.
@@ -62,7 +65,7 @@ private:
      */
     void dataprovider_callback(
         const std::shared_ptr<rmw_request_id_t> header,
-        const kenning_computer_vision_msgs::srv::RuntimeProtocolSrv::Request::SharedPtr request);
+        const RuntimeProtocolSrv::Request::SharedPtr request);
 
     /**
      * Holds DataProvider initialization up until inference should be started.
@@ -79,7 +82,7 @@ private:
      */
     void forward_data_request(
         const std::shared_ptr<rmw_request_id_t> header,
-        const kenning_computer_vision_msgs::srv::RuntimeProtocolSrv::Request::SharedPtr request);
+        const RuntimeProtocolSrv::Request::SharedPtr request);
 
     /**
      * Forwards output request to the CVNode-like node. Extracts output data from the response
@@ -94,7 +97,7 @@ private:
      *
      * @return True if initialization was successful, false otherwise.
      */
-    bool set_scenario();
+    bool configure_scenario();
 
     /**
      * Extracts input data from bytes-encoded.
@@ -103,8 +106,7 @@ private:
      *
      * @return Request with data to distribute. If error occurred, message type is set to ERROR.
      */
-    kenning_computer_vision_msgs::srv::SegmentCVNodeSrv::Request::SharedPtr
-    extract_images(std::vector<uint8_t> &input_data_b);
+    SegmentCVNodeSrv::Request::SharedPtr extract_images(std::vector<uint8_t> &input_data_b);
 
     /**
      * Converts output segmentations from the CVNode-like node to bytes-encoded state.
@@ -114,8 +116,7 @@ private:
      * @return Dataprovider response with output data from the CVNode-like node.
      *         If error occurred, message type is set to ERROR.
      */
-    kenning_computer_vision_msgs::srv::RuntimeProtocolSrv::Response segmentations_to_output_data(
-        const kenning_computer_vision_msgs::srv::SegmentCVNodeSrv::Response::SharedPtr response);
+    RuntimeProtocolSrv::Response segmentations_to_output_data(const SegmentCVNodeSrv::Response::SharedPtr response);
 
     /**
      * Broadcasts request to registered CVNode-like node.
@@ -127,30 +128,32 @@ private:
      */
     void async_broadcast_request(
         const std::shared_ptr<rmw_request_id_t> header,
-        const kenning_computer_vision_msgs::srv::SegmentCVNodeSrv::Request::SharedPtr request,
-        std::function<kenning_computer_vision_msgs::srv::RuntimeProtocolSrv::Response(
-            const kenning_computer_vision_msgs::srv::SegmentCVNodeSrv::Response::SharedPtr)> callback = nullptr);
+        const SegmentCVNodeSrv::Request::SharedPtr request,
+        std::function<RuntimeProtocolSrv::Response(const SegmentCVNodeSrv::Response::SharedPtr)> callback = nullptr);
 
     /**
      * Synthetic testing scenario.
+     * Forwards input data to the CVNode-like node and waits for response.
      *
      * @param header Header of the service request.
      */
-    void synthetic_inference_scenario(const std::shared_ptr<rmw_request_id_t> header);
+    void execute_synthetic_inference_scenario(const std::shared_ptr<rmw_request_id_t> header);
 
     /**
-     * Real-world testing scenario where last request is aborted if new one is received.
+     * Real-world testing scenario for the last request.
+     * Tries to always process the newest request by aborting the older ones.
      *
      * @param header Header of the service request.
      */
-    void real_world_last_inference_scenario(const std::shared_ptr<rmw_request_id_t> header);
+    void execute_real_world_last_inference_scenario(const std::shared_ptr<rmw_request_id_t> header);
 
     /**
-     * Real-world testing scenario where new request is aborted if last one is not finished yet.
+     * Real-world testing scenario for the first request.
+     * Tries to always finish the oldest request by ignoring the newer ones.
      *
      * @param header Header of the service request.
      */
-    void real_world_first_inference_scenario(const std::shared_ptr<rmw_request_id_t> header);
+    void execute_real_world_first_inference_scenario(const std::shared_ptr<rmw_request_id_t> header);
 
     /**
      * Creates a client to a service.
@@ -190,37 +193,35 @@ private:
      */
     void abort(const std::shared_ptr<rmw_request_id_t> header, const std::string &error_msg);
 
-    /// Service to register the CVNode
-    rclcpp::Service<kenning_computer_vision_msgs::srv::ManageCVNode>::SharedPtr manage_service;
+    rclcpp::Service<ManageCVNode>::SharedPtr manage_service; ///< Service to register the CVNode
 
     /// Client to communicate with Kenning
-    rclcpp::Service<kenning_computer_vision_msgs::srv::RuntimeProtocolSrv>::SharedPtr dataprovider_service;
+    rclcpp::Service<RuntimeProtocolSrv>::SharedPtr dataprovider_service;
 
-    /// Publisher to publish input data
-    rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr input_publisher;
+    /// Publisher to publish input data to GUI
+    rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr gui_input_publisher;
 
-    /// Publisher to publish output data
-    rclcpp::Publisher<kenning_computer_vision_msgs::msg::SegmentationMsg>::SharedPtr output_publisher;
+    /// Publisher to publish output data to GUI
+    rclcpp::Publisher<SegmentationMsg>::SharedPtr gui_output_publisher;
 
-    bool dataprovider_initialized = false;   ///< Flag indicating whether the DataProvider is initialized
-    std::mutex dataprovider_mutex;           ///< Mutex for DataProvider
-    std::condition_variable dataprovider_cv; ///< Condition variable for DataProvider
+    /// Condition variable for DataProvider to wait for CVNode to be initialized
+    std::condition_variable cvnode_wait_cv;
+
+    bool dataprovider_initialized = false; ///< Flag indicating whether the DataProvider is initialized
 
     /// Registered CVNode-like node
-    std::tuple<std::string, rclcpp::Client<kenning_computer_vision_msgs::srv::SegmentCVNodeSrv>::SharedPtr> cv_node =
-        std::make_tuple("", nullptr);
+    std::tuple<std::string, rclcpp::Client<SegmentCVNodeSrv>::SharedPtr> cv_node = std::make_tuple("", nullptr);
 
     // Shared future from last request
-    rclcpp::Client<kenning_computer_vision_msgs::srv::SegmentCVNodeSrv>::SharedFuture cv_node_future =
-        rclcpp::Client<kenning_computer_vision_msgs::srv::SegmentCVNodeSrv>::SharedFuture();
+    rclcpp::Client<SegmentCVNodeSrv>::SharedFuture cv_node_future = rclcpp::Client<SegmentCVNodeSrv>::SharedFuture();
 
-    /// Testing scenario function
+    /// Function responsible for executing proper inference scenario strategy
     std::function<void(const std::shared_ptr<rmw_request_id_t>)> inference_scenario_func = nullptr;
 
-    nlohmann::json output_data = nlohmann::json();  ///< Output data from inference
-    nlohmann::json measurements = nlohmann::json(); ///< Measurements from inference
-    std::chrono::steady_clock::time_point start;    ///< Start time of the inference
-    std::chrono::steady_clock::time_point end;      ///< End time of the inference
+    nlohmann::json output_data;                  ///< Output data from inference
+    nlohmann::json measurements;                 ///< Measurements from inference
+    std::chrono::steady_clock::time_point start; ///< Start time of the inference
+    std::chrono::steady_clock::time_point end;   ///< End time of the inference
 public:
     /**
      * Constructor.
