@@ -24,6 +24,23 @@ using SegmentCVNodeSrv = kenning_computer_vision_msgs::srv::SegmentCVNodeSrv;
 using SegmentationMsg = kenning_computer_vision_msgs::msg::SegmentationMsg;
 
 /**
+ * Structure holding information about registered CVNode-like node.
+ */
+struct CVNode
+{
+    std::string name;                                   ///< Name of the CVNode-like node.
+    rclcpp::Client<SegmentCVNodeSrv>::SharedPtr client; ///< Client to communicate with the CVNode-like node.
+
+    /**
+     * Constructor.
+     *
+     * @param name Name of the CVNode-like node.
+     * @param client Client to communicate with the CVNode-like node.
+     */
+    CVNode(const std::string &name, rclcpp::Client<SegmentCVNodeSrv>::SharedPtr client) : name(name), client(client) {}
+};
+
+/**
  * Node to manage testing process of the computer vision system.
  */
 class CVNodeManager : public rclcpp::Node
@@ -210,7 +227,7 @@ private:
     bool dataprovider_initialized = false; ///< Flag indicating whether the DataProvider is initialized
 
     /// Registered CVNode-like node
-    std::tuple<std::string, rclcpp::Client<SegmentCVNodeSrv>::SharedPtr> cv_node = std::make_tuple("", nullptr);
+    CVNode cv_node = CVNode("", nullptr);
 
     // Shared future from last request
     rclcpp::Client<SegmentCVNodeSrv>::SharedFuture cv_node_future = rclcpp::Client<SegmentCVNodeSrv>::SharedFuture();
