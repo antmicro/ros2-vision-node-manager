@@ -92,22 +92,14 @@ private:
     void initialize_dataprovider(const std::shared_ptr<rmw_request_id_t> header);
 
     /**
-     * Extracts input data from bytes-encoded and forwards it to the CVNode-like node.
+     * Extracts input data from bytes-encoded and prepares inference request for CVNode-like node.
      *
      * @param header Header of the service request.
      * @param request Request of the service.
      */
-    void forward_data_request(
+    void extract_data_from_request(
         const std::shared_ptr<rmw_request_id_t> header,
         const RuntimeProtocolSrv::Request::SharedPtr request);
-
-    /**
-     * Forwards output request to the CVNode-like node. Extracts output data from the response
-     * and forwards it back to the DataProvider.
-     *
-     * @param header Header of the service request.
-     */
-    void forward_output_request(const std::shared_ptr<rmw_request_id_t> header);
 
     /**
      * Initializes testing scenario strategy from ROS2 parameter.
@@ -130,10 +122,9 @@ private:
      *
      * @param response CVNode-like node response with segmentations attached.
      *
-     * @return Dataprovider response with output data from the CVNode-like node.
-     *         If error occurred, message type is set to ERROR.
+     * @return Bytes-encoded output data in JSON format.
      */
-    RuntimeProtocolSrv::Response segmentations_to_output_data(const SegmentCVNodeSrv::Response::SharedPtr response);
+    nlohmann::json segmentations_to_json(const SegmentCVNodeSrv::Response::SharedPtr response);
 
     /**
      * Broadcasts request to registered CVNode-like node.
@@ -226,8 +217,8 @@ private:
 
     bool dataprovider_initialized = false; ///< Flag indicating whether the DataProvider is initialized
 
-    /// Registered CVNode-like node
-    CVNode cv_node = CVNode("", nullptr);
+    CVNode cv_node = CVNode("", nullptr);                ///< Registered CVNode-like node used for inference
+    SegmentCVNodeSrv::Request::SharedPtr cvnode_request; ///< Request to the CVNode-like node containing input data
 
     // Shared future from last request
     rclcpp::Client<SegmentCVNodeSrv>::SharedFuture cv_node_future = rclcpp::Client<SegmentCVNodeSrv>::SharedFuture();
