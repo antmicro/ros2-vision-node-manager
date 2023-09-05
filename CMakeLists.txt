@@ -38,6 +38,7 @@ if(BUILD_TESTING)
     )
 endif()
 
+find_package(nlohmann_json QUIET)
 if(NOT nlohmann_json_FOUND)
     message("nlohmann_json not found - building it")
     include(FetchContent)
@@ -70,6 +71,11 @@ target_link_libraries(${PROJECT_NAME}
 #############
 
 if (BUILD_GUI)
+    add_library(${PROJECT_NAME}_gui SHARED
+        src/cvnode_manager_gui.cpp
+    )
+
+    find_package(gui_node QUIET)
     if(NOT gui_node_FOUND)
         message("gui_node not found - building it")
         include(FetchContent)
@@ -78,17 +84,20 @@ if (BUILD_GUI)
             GIT_TAG main
         )
         FetchContent_MakeAvailable(gui_node)
+        target_link_libraries(${PROJECT_NAME}_gui
+            gui_node
+            gui_node_core_widgets
+        )
+    else()
+        message("gui_node found - using it")
+        ament_target_dependencies(${PROJECT_NAME}_gui
+            gui_node
+        )
     endif()
 
     find_package(OpenCV REQUIRED)
 
-    add_library(${PROJECT_NAME}_gui SHARED
-        src/cvnode_manager_gui.cpp
-    )
-
     target_link_libraries(${PROJECT_NAME}_gui
-        gui_node
-        gui_node_core_widgets
         ${OpenCV_LIBS}
     )
 
