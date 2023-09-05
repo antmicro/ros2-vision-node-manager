@@ -4,6 +4,7 @@
 
 #include <cvnode_manager/cvnode_manager.hpp>
 #include <kenning_computer_vision_msgs/msg/runtime_msg_type.hpp>
+#include <mutex>
 #include <rcl_interfaces/msg/parameter_descriptor.hpp>
 #include <rcl_interfaces/msg/parameter_type.hpp>
 #include <sensor_msgs/msg/image.hpp>
@@ -17,11 +18,11 @@ using RuntimeMsgType = kenning_computer_vision_msgs::msg::RuntimeMsgType;
 CVNodeManager::CVNodeManager(const rclcpp::NodeOptions &options) : Node("cvnode_manager", options)
 {
     manage_service = create_service<ManageCVNode>(
-        "node_manager/register",
+        "cvnode_register",
         std::bind(&CVNodeManager::manage_node_callback, this, std::placeholders::_1, std::placeholders::_2));
 
     dataprovider_service = create_service<RuntimeProtocolSrv>(
-        "node_manager/dataprovider",
+        "dataprovider",
         std::bind(&CVNodeManager::dataprovider_callback, this, std::placeholders::_1, std::placeholders::_2));
 
     rcl_interfaces::msg::ParameterDescriptor descriptor;
@@ -48,7 +49,7 @@ CVNodeManager::CVNodeManager(const rclcpp::NodeOptions &options) : Node("cvnode_
     declare_parameter("scenario", "synthetic", descriptor);
 
     // Parameter bool to preserve last output
-    descriptor.description = "Preserve last output";
+    descriptor.description = "Preserves last frame output if timeout is reached during inference";
     descriptor.additional_constraints = "Must be a boolean value";
     descriptor.read_only = false;
     descriptor.type = rcl_interfaces::msg::ParameterType::PARAMETER_BOOL;
@@ -64,19 +65,16 @@ void CVNodeManager::dataprovider_callback(
     const std::shared_ptr<RuntimeProtocolSrv::Request> request)
 {
     RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
-    SegmentCVNodeSrv::Request::SharedPtr inference_request = std::make_shared<SegmentCVNodeSrv::Request>();
     std::string data;
     switch (request->message_type)
     {
     case RuntimeMsgType::OK:
-        if (!dataprovider_initialized)
-        {
-            initialize_dataprovider(header);
-        }
-        else
+        if (dataprovider_initialized)
         {
             abort(header, "[OK] Received unexpected 'OK' message.");
+            break;
         }
+        initialize_dataprovider(header);
         break;
     case RuntimeMsgType::ERROR:
         abort(header, "[ERROR] Received error message from the dataprovider.");
@@ -87,26 +85,24 @@ void CVNodeManager::dataprovider_callback(
         dataprovider_service->send_response(*header, response);
         break;
     case RuntimeMsgType::MODEL:
-        inference_request->message_type = RuntimeMsgType::MODEL;
-        async_broadcast_request(header, inference_request);
+        cvnode_request->message_type = RuntimeMsgType::MODEL;
+        async_broadcast_request(header, cvnode_request);
         break;
     case RuntimeMsgType::DATA:
         extract_data_from_request(header, request);
         break;
     case RuntimeMsgType::PROCESS:
-        if (inference_scenario_func != nullptr)
-        {
-            if (!get_parameter("preserve_output").as_bool())
-            {
-                output_data = nlohmann::json();
-                output_data.emplace("output", nlohmann::json::array());
-            }
-            std::thread(inference_scenario_func, header).detach();
-        }
-        else
+        if (inference_scenario_func == nullptr)
         {
             abort(header, "[PROCESS] Inference scenario function is not initialized");
+            break;
         }
+        if (!get_parameter("preserve_output").as_bool())
+        {
+            output_data = nlohmann::json();
+            output_data.emplace("output", nlohmann::json::array());
+        }
+        std::thread(inference_scenario_func, header).detach();
         break;
     case RuntimeMsgType::OUTPUT:
         data = output_data.dump();
@@ -119,8 +115,17 @@ void CVNodeManager::dataprovider_callback(
         response.data = std::vector<uint8_t>(data.begin(), data.end());
         response.message_type = RuntimeMsgType::OK;
         dataprovider_service->send_response(*header, response);
-        inference_request->message_type = RuntimeMsgType::CLEANUP;
-        async_broadcast_request(header, inference_request);
+        cvnode_request->message_type = RuntimeMsgType::CLEANUP;
+        cv_node.client->async_send_request(
+            cvnode_request,
+            [this](rclcpp::Client<SegmentCVNodeSrv>::SharedFuture future)
+            {
+                auto response = future.get();
+                if (response->message_type != RuntimeMsgType::OK)
+                {
+                    RCLCPP_ERROR(get_logger(), "Error while cleaning up the node.");
+                }
+            });
         break;
     default:
         data = "[UNKNOWN] Received unknown message type: " + std::to_string(request->message_type);
@@ -175,12 +180,13 @@ void CVNodeManager::extract_data_from_request(
     const RuntimeProtocolSrv::Request::SharedPtr request)
 {
     cvnode_request = extract_images(request->data);
-    if (cvnode_request->message_type == RuntimeMsgType::ERROR)
+    if (cvnode_request->message_type != RuntimeMsgType::OK)
     {
         abort(header, "[DATA] Error while extracting data.");
         async_broadcast_request(header, cvnode_request);
         return;
     }
+    cvnode_request->message_type = RuntimeMsgType::PROCESS;
 
     if (get_parameter("publish_visualizations").as_bool())
     {
@@ -233,14 +239,18 @@ void CVNodeManager::execute_synthetic_inference_scenario(const std::shared_ptr<r
         abort(header, "[PROCESS] No data received.");
         return;
     }
-    cvnode_request->message_type = RuntimeMsgType::PROCESS;
+    else if (cvnode_request->message_type != RuntimeMsgType::PROCESS)
+    {
+        abort(header, "[PROCESS] Received wrong message type.");
+        return;
+    }
 
     start = steady_clock::now();
-    cv_node_future = cv_node.client->async_send_request(cvnode_request).future.share();
-    cv_node_future.wait();
-    SegmentCVNodeSrv::Response::SharedPtr inference_response = cv_node_future.get();
+    cvnode_future = cv_node.client->async_send_request(cvnode_request).future.share();
+    cvnode_future.wait();
+    SegmentCVNodeSrv::Response::SharedPtr inference_response = cvnode_future.get();
     end = steady_clock::now();
-    cv_node_future = std::shared_future<SegmentCVNodeSrv::Response::SharedPtr>();
+    cvnode_future = std::shared_future<SegmentCVNodeSrv::Response::SharedPtr>();
     if (inference_response->message_type != RuntimeMsgType::OK)
     {
         abort(header, "[SYNTHETIC] Error while processing data.");
@@ -270,15 +280,19 @@ void CVNodeManager::execute_real_world_last_inference_scenario(const std::shared
         abort(header, "[PROCESS] No data received.");
         return;
     }
-    cvnode_request->message_type = RuntimeMsgType::PROCESS;
+    else if (cvnode_request->message_type != RuntimeMsgType::PROCESS)
+    {
+        abort(header, "[PROCESS] Received wrong message type.");
+        return;
+    }
 
     /// Send inference request
     start = steady_clock::now();
-    cv_node_future = cv_node.client->async_send_request(cvnode_request).future.share();
-    if (cv_node_future.wait_for(milliseconds(get_parameter("inference_timeout_ms").as_int())) ==
+    cvnode_future = cv_node.client->async_send_request(cvnode_request).future.share();
+    if (cvnode_future.wait_for(milliseconds(get_parameter("inference_timeout_ms").as_int())) ==
         std::future_status::ready)
     {
-        SegmentCVNodeSrv::Response::SharedPtr inference_response = cv_node_future.get();
+        SegmentCVNodeSrv::Response::SharedPtr inference_response = cvnode_future.get();
         if (inference_response->message_type != RuntimeMsgType::OK)
         {
             abort(header, "[REAL WORLD LAST] Error while processing data.");
@@ -299,7 +313,7 @@ void CVNodeManager::execute_real_world_last_inference_scenario(const std::shared
         .push_back(duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count() / 1000.0);
 
     // Reset future to make sure that it is not reused
-    cv_node_future = std::future<SegmentCVNodeSrv::Response::SharedPtr>();
+    cvnode_future = std::future<SegmentCVNodeSrv::Response::SharedPtr>();
 
     RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
     response.message_type = RuntimeMsgType::OK;
@@ -311,28 +325,32 @@ void CVNodeManager::execute_real_world_first_inference_scenario(const std::share
     using namespace std::chrono;
 
     RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
-    if (!cv_node_future.valid())
+    if (!cvnode_future.valid())
     {
         if (cvnode_request->input.empty())
         {
             abort(header, "[PROCESS] No data received.");
             return;
         }
-        cvnode_request->message_type = RuntimeMsgType::PROCESS;
+        else if (cvnode_request->message_type != RuntimeMsgType::PROCESS)
+        {
+            abort(header, "[PROCESS] Received wrong message type.");
+            return;
+        }
         start = steady_clock::now();
-        cv_node_future = cv_node.client->async_send_request(cvnode_request).future.share();
+        cvnode_future = cv_node.client->async_send_request(cvnode_request).future.share();
     }
-    if (cv_node_future.wait_for(milliseconds(get_parameter("inference_timeout_ms").as_int())) ==
+    if (cvnode_future.wait_for(milliseconds(get_parameter("inference_timeout_ms").as_int())) ==
         std::future_status::ready)
     {
-        SegmentCVNodeSrv::Response::SharedPtr inference_response = cv_node_future.get();
+        SegmentCVNodeSrv::Response::SharedPtr inference_response = cvnode_future.get();
         if (inference_response->message_type != RuntimeMsgType::OK)
         {
             abort(header, "[REAL WORLD FIRST] Error while processing data.");
             return;
         }
         end = steady_clock::now();
-        cv_node_future = std::shared_future<SegmentCVNodeSrv::Response::SharedPtr>();
+        cvnode_future = std::shared_future<SegmentCVNodeSrv::Response::SharedPtr>();
 
         float duration = duration_cast<milliseconds>(end - start).count() / 1000.0;
         measurements.at("target_inference_step").push_back(duration);
@@ -456,7 +474,7 @@ SegmentCVNodeSrv::Request::SharedPtr CVNodeManager::extract_images(std::vector<u
         request->message_type = RuntimeMsgType::ERROR;
         return request;
     }
-    request->message_type = RuntimeMsgType::DATA;
+    request->message_type = RuntimeMsgType::OK;
     return request;
 }
 
@@ -487,14 +505,14 @@ void CVNodeManager::register_node_callback(
 {
     std::string node_name = request->node_name;
     response->status = false;
-    RCLCPP_DEBUG(get_logger(), "Registering the '%s' node", node_name.c_str());
+    RCLCPP_DEBUG(get_logger(), "[REGISTER] Registering the '%s' node", node_name.c_str());
 
     if (cv_node.client != nullptr)
     {
         response->message = "There is already a node registered";
         RCLCPP_WARN(
             get_logger(),
-            "Could not register the node '%s' because there is already a node registered",
+            "[REGISTER] Could not register the node '%s' because there is already a node registered",
             node_name.c_str());
         return;
     }
@@ -504,7 +522,7 @@ void CVNodeManager::register_node_callback(
     if (!initialize_service_client<SegmentCVNodeSrv>(request->srv_name, cv_node_service))
     {
         response->message = "Could not initialize the communication service client";
-        RCLCPP_ERROR(get_logger(), "Could not initialize the communication service client");
+        RCLCPP_ERROR(get_logger(), "[REGISTER] Could not initialize the communication service client");
         return;
     }
 
@@ -516,7 +534,7 @@ void CVNodeManager::register_node_callback(
     {
         cvnode_wait_cv.notify_one();
     }
-    RCLCPP_DEBUG(get_logger(), "The node '%s' is registered", node_name.c_str());
+    RCLCPP_DEBUG(get_logger(), "[REGISTER] The node '%s' is registered", node_name.c_str());
 }
 
 void CVNodeManager::unregister_node_callback(
@@ -525,26 +543,25 @@ void CVNodeManager::unregister_node_callback(
 {
     std::string node_name = request->node_name;
 
-    RCLCPP_DEBUG(get_logger(), "Unregistering the node '%s'", node_name.c_str());
+    RCLCPP_DEBUG(get_logger(), "[UNREGISTER] Unregistering the node '%s'", node_name.c_str());
     if (cv_node.name != node_name)
     {
-        RCLCPP_WARN(get_logger(), "The node '%s' is not registered", node_name.c_str());
+        RCLCPP_WARN(get_logger(), "[UNREGISTER] The node '%s' is not registered", node_name.c_str());
         return;
     }
 
     cv_node = CVNode("", nullptr);
-    RCLCPP_DEBUG(get_logger(), "The node '%s' is unregistered", node_name.c_str());
+    RCLCPP_DEBUG(get_logger(), "[UNREGISTER] The node '%s' is unregistered", node_name.c_str());
     return;
 }
 
 void CVNodeManager::abort(const std::shared_ptr<rmw_request_id_t> header, const std::string &error_msg)
 {
     RCLCPP_ERROR(get_logger(), "%s", error_msg.c_str());
-    SegmentCVNodeSrv::Request::SharedPtr request = std::make_shared<SegmentCVNodeSrv::Request>();
     RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
-    request->message_type = RuntimeMsgType::ERROR;
+    cvnode_request->message_type = RuntimeMsgType::ERROR;
     response.message_type = RuntimeMsgType::ERROR;
-    cv_node.client->async_send_request(request);
+    cv_node.client->async_send_request(cvnode_request);
     dataprovider_service->send_response(*header, response);
 }
 

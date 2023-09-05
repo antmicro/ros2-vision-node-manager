@@ -4,11 +4,10 @@
 
 #pragma once
 
-#include <mutex>
+#include <condition_variable>
 #include <nlohmann/json.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <string>
-#include <unordered_map>
 
 #include <kenning_computer_vision_msgs/msg/segmentation_msg.hpp>
 #include <kenning_computer_vision_msgs/srv/manage_cv_node.hpp>
@@ -92,7 +91,8 @@ private:
     void initialize_dataprovider(const std::shared_ptr<rmw_request_id_t> header);
 
     /**
-     * Extracts input data from bytes-encoded and prepares inference request for CVNode-like node.
+     * Extracts input data from DataProvider request.
+     * Prepares inference request for CVNode-like node.
      *
      * @param header Header of the service request.
      * @param request Request of the service.
@@ -102,14 +102,14 @@ private:
         const RuntimeProtocolSrv::Request::SharedPtr request);
 
     /**
-     * Initializes testing scenario strategy from ROS2 parameter.
+     * Configures testing scenario strategy based on 'scenario' ROS2 parameter.
      *
      * @return True if initialization was successful, false otherwise.
      */
     bool configure_scenario();
 
     /**
-     * Extracts input data from bytes-encoded.
+     * Extracts input data from bytes-encoded json.
      *
      * @param input_data_b Bytes-encoded input data.
      *
@@ -118,7 +118,7 @@ private:
     SegmentCVNodeSrv::Request::SharedPtr extract_images(std::vector<uint8_t> &input_data_b);
 
     /**
-     * Converts output segmentations from the CVNode-like node to bytes-encoded state.
+     * Converts output segmentations from the CVNode-like node to bytes-encoded json state.
      *
      * @param response CVNode-like node response with segmentations attached.
      *
@@ -203,7 +203,7 @@ private:
 
     rclcpp::Service<ManageCVNode>::SharedPtr manage_service; ///< Service to register the CVNode
 
-    /// Client to communicate with Kenning
+    /// Client to communicate with DataProvider
     rclcpp::Service<RuntimeProtocolSrv>::SharedPtr dataprovider_service;
 
     /// Publisher to publish input data to GUI
@@ -216,20 +216,21 @@ private:
     std::condition_variable cvnode_wait_cv;
 
     bool dataprovider_initialized = false; ///< Flag indicating whether the DataProvider is initialized
+    CVNode cv_node = CVNode("", nullptr);  ///< Registered CVNode-like node used for inference
 
-    CVNode cv_node = CVNode("", nullptr);                ///< Registered CVNode-like node used for inference
-    SegmentCVNodeSrv::Request::SharedPtr cvnode_request; ///< Request to the CVNode-like node containing input data
+    /// Request to communicate with the CVNode-like node
+    SegmentCVNodeSrv::Request::SharedPtr cvnode_request = std::make_shared<SegmentCVNodeSrv::Request>();
 
-    // Shared future from last request
-    rclcpp::Client<SegmentCVNodeSrv>::SharedFuture cv_node_future = rclcpp::Client<SegmentCVNodeSrv>::SharedFuture();
+    // Shared future from last request to CVNode-like node
+    rclcpp::Client<SegmentCVNodeSrv>::SharedFuture cvnode_future = rclcpp::Client<SegmentCVNodeSrv>::SharedFuture();
 
     /// Function responsible for executing proper inference scenario strategy
     std::function<void(const std::shared_ptr<rmw_request_id_t>)> inference_scenario_func = nullptr;
 
-    nlohmann::json output_data;                  ///< Output data from inference
-    nlohmann::json measurements;                 ///< Measurements from inference
-    std::chrono::steady_clock::time_point start; ///< Start time of the inference
-    std::chrono::steady_clock::time_point end;   ///< End time of the inference
+    nlohmann::json output_data;                  ///< Output data from inference in JSON format
+    nlohmann::json measurements;                 ///< Measurements from inference in JSON format
+    std::chrono::steady_clock::time_point start; ///< Timestamp indicating start of the inference
+    std::chrono::steady_clock::time_point end;   ///< Timestamp indicating ending of the inference
 public:
     /**
      * Constructor.

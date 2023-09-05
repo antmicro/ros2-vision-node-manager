@@ -23,12 +23,7 @@ namespace gui
 {
 
 using namespace gui_node;
-
 using SegmentationMsg = kenning_computer_vision_msgs::msg::SegmentationMsg;
-
-using RosSegmentationSubscriberData = RosSubscriberData<SegmentationMsg, SegmentationMsg::SharedPtr>;
-using MsgImageSharedPtr = sensor_msgs::msg::Image::SharedPtr;
-using RosImageSubscriberData = RosSubscriberData<sensor_msgs::msg::Image, sensor_msgs::msg::Image::SharedPtr>;
 
 class CVNodeManagerGUI
 {
@@ -116,6 +111,10 @@ private:
 public:
     CVNodeManagerGUI(const rclcpp::NodeOptions &options)
     {
+        using MsgImageSharedPtr = sensor_msgs::msg::Image::SharedPtr;
+        using RosImageSubscriberData = RosSubscriberData<sensor_msgs::msg::Image, sensor_msgs::msg::Image::SharedPtr>;
+        using RosSegmentationSubscriberData = RosSubscriberData<SegmentationMsg, SegmentationMsg::SharedPtr>;
+
         gui_node_ptr = std::make_shared<GuiNode>(options, "gui_node");
 
         // Widget to display instance segmentations
