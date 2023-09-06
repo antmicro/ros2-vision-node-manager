@@ -21,6 +21,7 @@ find_package(kenning_computer_vision_msgs REQUIRED)
 find_package(rcl_interfaces REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_components REQUIRED)
+find_package(std_srvs REQUIRED)
 
 if(BUILD_TESTING)
     find_package(ament_cmake_clang_format REQUIRED)
@@ -60,6 +61,7 @@ ament_target_dependencies(${PROJECT_NAME}
     rcl_interfaces
     rclcpp
     rclcpp_components
+    std_srvs
 )
 
 rclcpp_components_register_nodes(${PROJECT_NAME} "cvnode_manager::CVNodeManager")

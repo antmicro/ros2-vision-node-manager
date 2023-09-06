@@ -7,6 +7,7 @@
 #include <condition_variable>
 #include <nlohmann/json.hpp>
 #include <rclcpp/rclcpp.hpp>
+#include <std_srvs/srv/trigger.hpp>
 #include <string>
 
 #include <kenning_computer_vision_msgs/msg/segmentation_msg.hpp>
@@ -27,16 +28,32 @@ using SegmentationMsg = kenning_computer_vision_msgs::msg::SegmentationMsg;
  */
 struct CVNode
 {
-    std::string name;                                   ///< Name of the CVNode-like node.
-    rclcpp::Client<SegmentCVNodeSrv>::SharedPtr client; ///< Client to communicate with the CVNode-like node.
+    std::string name;                                          ///< Name of the CVNode-like node.
+    rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr prepare; ///< Client to prepare the CVNode-like node.
+    rclcpp::Client<SegmentCVNodeSrv>::SharedPtr process;       ///< Client to run inference on the CVNode-like node.
+    rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr cleanup; ///< Client to cleanup the CVNode-like node.
 
     /**
      * Constructor.
      *
      * @param name Name of the CVNode-like node.
-     * @param client Client to communicate with the CVNode-like node.
+     * @param prepare Client to prepare the CVNode-like node.
+     * @param process Client to communicate with the CVNode-like node.
+     * @param cleanup Client to cleanup the CVNode-like node.
      */
-    CVNode(const std::string &name, rclcpp::Client<SegmentCVNodeSrv>::SharedPtr client) : name(name), client(client) {}
+    CVNode(
+        const std::string &name,
+        rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr prepare,
+        rclcpp::Client<SegmentCVNodeSrv>::SharedPtr process,
+        rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr cleanup)
+        : name(name), prepare(prepare), process(process), cleanup(cleanup)
+    {
+    }
+
+    /**
+     * Default constructor.
+     */
+    CVNode() = default;
 };
 
 /**
@@ -127,19 +144,6 @@ private:
     nlohmann::json segmentations_to_json(const SegmentCVNodeSrv::Response::SharedPtr response);
 
     /**
-     * Broadcasts request to registered CVNode-like node.
-     * Responses with 'OK' to DataProvider when received confirmation, 'ERROR' otherwise.
-     *
-     * @param header Header of the service request.
-     * @param request Request to broadcast.
-     * @param callback Callback to be executed with every received confirmation.
-     */
-    void async_broadcast_request(
-        const std::shared_ptr<rmw_request_id_t> header,
-        const SegmentCVNodeSrv::Request::SharedPtr request,
-        std::function<RuntimeProtocolSrv::Response(const SegmentCVNodeSrv::Response::SharedPtr)> callback = nullptr);
-
-    /**
      * Synthetic testing scenario.
      * Forwards input data to the CVNode-like node and waits for response.
      *
@@ -216,7 +220,7 @@ private:
     std::condition_variable cvnode_wait_cv;
 
     bool dataprovider_initialized = false; ///< Flag indicating whether the DataProvider is initialized
-    CVNode cv_node = CVNode("", nullptr);  ///< Registered CVNode-like node used for inference
+    CVNode cv_node = CVNode();             ///< Registered CVNode-like node used for inference
 
     /// Request to communicate with the CVNode-like node
     SegmentCVNodeSrv::Request::SharedPtr cvnode_request = std::make_shared<SegmentCVNodeSrv::Request>();
