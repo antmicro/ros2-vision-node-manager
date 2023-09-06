@@ -189,22 +189,41 @@ void CVNodeManager::initialize_dataprovider(const std::shared_ptr<rmw_request_id
     }
 }
 
+// NOTE: This method should be reworked to use more precisely described data format
 void CVNodeManager::extract_data_from_request(
     const std::shared_ptr<rmw_request_id_t> header,
     const RuntimeProtocolSrv::Request::SharedPtr request)
 {
-    cvnode_request = extract_images(request->data);
-    if (cvnode_request->input.empty())
+    bool publish = get_parameter("publish_visualizations").as_bool();
+    try
     {
-        abort(header, "[DATA] Error while extracting data.");
-        return;
-    }
-    if (get_parameter("publish_visualizations").as_bool())
-    {
-        for (auto &image : cvnode_request->input)
+        nlohmann::json data_j = nlohmann::json::parse(std::string(request->data.begin(), request->data.end()));
+        std::vector<nlohmann::json> data = data_j.at("data");
+        if (data.size() == 0)
         {
-            gui_input_publisher->publish(image);
+            abort(header, "[DATA] Error while extracting data.");
+            return;
         }
+        cvnode_request->input.clear();
+        for (auto &image : data)
+        {
+            sensor_msgs::msg::Image img;
+            img.height = image.at("height");
+            img.width = image.at("width");
+            img.encoding = "bgr8";
+            img.data = image.at("data").get<std::vector<uint8_t>>();
+            img.step = img.width * 3;
+            cvnode_request->input.push_back(img);
+            if (publish)
+            {
+                gui_input_publisher->publish(img);
+            }
+        }
+    }
+    catch (nlohmann::json::exception &e)
+    {
+        cvnode_request->input.clear();
+        abort(header, "[DATA] Error while extracting data.");
     }
 
     RuntimeProtocolSrv::Response response = RuntimeProtocolSrv::Response();
@@ -396,39 +415,6 @@ nlohmann::json CVNodeManager::segmentations_to_json(const SegmentCVNodeSrv::Resp
         }
     }
     return output_data_json;
-}
-
-// NOTE: This method should be reworked to use more precisely described data format
-SegmentCVNodeSrv::Request::SharedPtr CVNodeManager::extract_images(std::vector<uint8_t> &input_data_b)
-{
-    SegmentCVNodeSrv::Request::SharedPtr request = std::make_shared<SegmentCVNodeSrv::Request>();
-
-    try
-    {
-        nlohmann::json data_j = nlohmann::json::parse(std::string(input_data_b.begin(), input_data_b.end()));
-        std::vector<nlohmann::json> data = data_j.at("data");
-        if (data.size() == 0)
-        {
-            RCLCPP_ERROR(get_logger(), "[EXTRACT IMAGES] Data is empty");
-            return request;
-        }
-        for (auto &image : data)
-        {
-            sensor_msgs::msg::Image img;
-            img.height = image.at("height");
-            img.width = image.at("width");
-            img.encoding = "bgr8";
-            img.data = image.at("data").get<std::vector<uint8_t>>();
-            img.step = img.width * 3;
-            request->input.push_back(img);
-        }
-    }
-    catch (nlohmann::json::exception &e)
-    {
-        RCLCPP_ERROR(get_logger(), "[EXTRACT IMAGES] Error while parsing data json: %s", e.what());
-        request->input.clear();
-    }
-    return request;
 }
 
 void CVNodeManager::manage_node_callback(

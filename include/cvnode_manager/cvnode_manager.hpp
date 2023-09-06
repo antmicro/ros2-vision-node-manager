@@ -38,7 +38,7 @@ struct CVNode
      *
      * @param name Name of the CVNode-like node.
      * @param prepare Client to prepare the CVNode-like node.
-     * @param process Client to communicate with the CVNode-like node.
+     * @param process Client to run inference on the CVNode-like node.
      * @param cleanup Client to cleanup the CVNode-like node.
      */
     CVNode(
@@ -126,15 +126,6 @@ private:
     bool configure_scenario();
 
     /**
-     * Extracts input data from bytes-encoded json.
-     *
-     * @param input_data_b Bytes-encoded input data.
-     *
-     * @return Request with data to distribute. If error occurred, message type is set to ERROR.
-     */
-    SegmentCVNodeSrv::Request::SharedPtr extract_images(std::vector<uint8_t> &input_data_b);
-
-    /**
      * Converts output segmentations from the CVNode-like node to bytes-encoded json state.
      *
      * @param response CVNode-like node response with segmentations attached.
@@ -197,8 +188,7 @@ private:
     }
 
     /**
-     * Aborts further processing.
-     * Reports error to the registered CVNode-like node and DataProvider.
+     * Aborts further processing and reports error to DataProvider.
      *
      * @param header Header of the service request.
      * @param error_msg Error message to be logged.
@@ -222,10 +212,10 @@ private:
     bool dataprovider_initialized = false; ///< Flag indicating whether the DataProvider is initialized
     CVNode cv_node = CVNode();             ///< Registered CVNode-like node used for inference
 
-    /// Request to communicate with the CVNode-like node
+    /// Inference request for registered CVNode-like node
     SegmentCVNodeSrv::Request::SharedPtr cvnode_request = std::make_shared<SegmentCVNodeSrv::Request>();
 
-    // Shared future from last request to CVNode-like node
+    // Shared future from last inference request to CVNode-like node
     rclcpp::Client<SegmentCVNodeSrv>::SharedFuture cvnode_future = rclcpp::Client<SegmentCVNodeSrv>::SharedFuture();
 
     /// Function responsible for executing proper inference scenario strategy
