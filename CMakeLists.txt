@@ -86,16 +86,15 @@ if (BUILD_GUI)
             GIT_TAG main
         )
         FetchContent_MakeAvailable(gui_node)
-        target_link_libraries(${PROJECT_NAME}_gui
-            gui_node
-            gui_node_core_widgets
-        )
+        add_library(gui_node::gui_node ALIAS gui_node)
+        add_library(gui_node::gui_node_core_widgets ALIAS gui_node_core_widgets)
     else()
         message("gui_node found - using it")
-        ament_target_dependencies(${PROJECT_NAME}_gui
-            gui_node
-        )
     endif()
+    target_link_libraries(${PROJECT_NAME}_gui
+        gui_node::gui_node
+        gui_node::gui_node_core_widgets
+    )
 
     find_package(OpenCV REQUIRED)
 
