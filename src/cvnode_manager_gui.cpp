@@ -83,6 +83,8 @@ private:
                 cv::addWeighted(mask, 0.4, frame, 1.0, 0, frame);
             }
         }
+        // Convert from BGR to RGB
+        cv::cvtColor(frame, frame, cv::COLOR_BGR2RGB);
         return instance_segmentation_msg->frame;
     }
 
@@ -148,7 +150,15 @@ public:
         std::shared_ptr<RosImageSubscriberData> subscriber_video = std::make_shared<RosImageSubscriberData>(
             gui_node_ptr,
             "input_frame",
-            [](const MsgImageSharedPtr msg) -> MsgImageSharedPtr { return msg; });
+            [](const MsgImageSharedPtr msg) -> MsgImageSharedPtr
+            {
+                int height = msg->height;
+                int width = msg->width;
+
+                cv::Mat frame(height, width, CV_8UC3, msg->data.data());
+                cv::cvtColor(frame, frame, cv::COLOR_BGR2RGB);
+                return msg;
+            });
         gui_node_ptr->addRosData("input_subscriber", subscriber_video);
 
         std::shared_ptr<VideoWidget> video_widget = std::make_shared<VideoWidget>(
