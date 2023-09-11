@@ -7,21 +7,22 @@
 #include <condition_variable>
 #include <nlohmann/json.hpp>
 #include <rclcpp/rclcpp.hpp>
+#include <rclcpp_action/rclcpp_action.hpp>
 #include <std_srvs/srv/trigger.hpp>
 #include <string>
 
+#include <kenning_computer_vision_msgs/action/segmentation_action.hpp>
 #include <kenning_computer_vision_msgs/msg/segmentation_msg.hpp>
 #include <kenning_computer_vision_msgs/srv/manage_cv_node.hpp>
-#include <kenning_computer_vision_msgs/srv/runtime_protocol_srv.hpp>
 #include <kenning_computer_vision_msgs/srv/segment_cv_node_srv.hpp>
 
 namespace cvnode_manager
 {
 
 using ManageCVNode = kenning_computer_vision_msgs::srv::ManageCVNode;
-using RuntimeProtocolSrv = kenning_computer_vision_msgs::srv::RuntimeProtocolSrv;
 using SegmentCVNodeSrv = kenning_computer_vision_msgs::srv::SegmentCVNodeSrv;
 using SegmentationMsg = kenning_computer_vision_msgs::msg::SegmentationMsg;
+using SegmentationAction = kenning_computer_vision_msgs::action::SegmentationAction;
 
 /**
  * Structure holding information about registered CVNode-like node.
@@ -91,72 +92,79 @@ private:
         [[maybe_unused]] ManageCVNode::Response::SharedPtr response);
 
     /**
-     * Callback for communication with DataProvider.
+     * Handles the testing process goal.
+     *
+     * @param uuid UUID of the testing process.
+     * @param goal Pointer to the goal of the testing process.
+     *
+     * @return Response of the testing process.
+     */
+    rclcpp_action::GoalResponse
+    handle_test_process_goal(const rclcpp_action::GoalUUID &uuid, std::shared_ptr<const SegmentationAction::Goal> goal);
+
+    /**
+     * Handles the testing process cancel request.
+     *
+     * @param goal_handle Pointer to the goal handle of the testing process.
+     *
+     * @return Cancel response of the testing process.
+     */
+    rclcpp_action::CancelResponse
+    handle_test_process_cancel(const std::shared_ptr<rclcpp_action::ServerGoalHandle<SegmentationAction>> goal_handle);
+
+    /**
+     * Handles the testing process accepted request.
+     * Starts the testing process.
+     *
+     * @param goal_handle Pointer to the goal handle of the testing process.
+     */
+    void handle_test_process_accepted(
+        const std::shared_ptr<rclcpp_action::ServerGoalHandle<SegmentationAction>> goal_handle);
+
+    /**
+     * Prepares CVNode-like node for the testing process.
      *
      * @param header Header of the service request.
      * @param request Request of the service.
      */
-    void dataprovider_callback(
+    void prepare_node(
         const std::shared_ptr<rmw_request_id_t> header,
-        const RuntimeProtocolSrv::Request::SharedPtr request);
+        const std_srvs::srv::Trigger::Request::SharedPtr request);
 
     /**
-     * Holds DataProvider initialization up until inference should be started.
-     *
-     * @param header Header of the service request.
-     */
-    void initialize_dataprovider(const std::shared_ptr<rmw_request_id_t> header);
-
-    /**
-     * Extracts input data from DataProvider request.
-     * Prepares inference request for CVNode-like node.
+     * Uploads time measurements of inference testing in a JSON-encoded string.
+     * Performs cleanup of the CVNode-like node.
      *
      * @param header Header of the service request.
      * @param request Request of the service.
      */
-    void extract_data_from_request(
+    void upload_measurements(
         const std::shared_ptr<rmw_request_id_t> header,
-        const RuntimeProtocolSrv::Request::SharedPtr request);
-
-    /**
-     * Configures testing scenario strategy based on 'scenario' ROS2 parameter.
-     *
-     * @return True if initialization was successful, false otherwise.
-     */
-    bool configure_scenario();
-
-    /**
-     * Converts output segmentations from the CVNode-like node to bytes-encoded json state.
-     *
-     * @param response CVNode-like node response with segmentations attached.
-     *
-     * @return Bytes-encoded output data in JSON format.
-     */
-    nlohmann::json segmentations_to_json(const SegmentCVNodeSrv::Response::SharedPtr response);
+        const std_srvs::srv::Trigger::Request::SharedPtr request);
 
     /**
      * Synthetic testing scenario.
      * Forwards input data to the CVNode-like node and waits for response.
      *
-     * @param header Header of the service request.
+     * @return True if scenario succeeded, False otherwise.
      */
-    void execute_synthetic_inference_scenario(const std::shared_ptr<rmw_request_id_t> header);
-
-    /**
-     * Real-world testing scenario for the last request.
-     * Tries to always process the newest request by aborting the older ones.
-     *
-     * @param header Header of the service request.
-     */
-    void execute_real_world_last_inference_scenario(const std::shared_ptr<rmw_request_id_t> header);
+    bool execute_synthetic_inference_scenario();
 
     /**
      * Real-world testing scenario for the first request.
      * Tries to always finish the oldest request by ignoring the newer ones.
      *
-     * @param header Header of the service request.
+     * @return True if scenario succeeded, False otherwise.
      */
-    void execute_real_world_first_inference_scenario(const std::shared_ptr<rmw_request_id_t> header);
+    bool execute_real_world_first_inference_scenario();
+
+    /**
+     * Real-world testing scenario for the last request.
+     * Tries to always process the newest request by aborting the older ones.
+     *
+     * @return True if scenario succeeded, False otherwise.
+     */
+    bool execute_real_world_last_inference_scenario();
 
     /**
      * Creates a client to a service.
@@ -187,22 +195,14 @@ private:
         return true;
     }
 
-    /**
-     * Aborts further processing and reports error to DataProvider.
-     *
-     * @param header Header of the service request.
-     * @param error_msg Error message to be logged.
-     */
-    void abort(const std::shared_ptr<rmw_request_id_t> header, const std::string &error_msg);
+    rclcpp::Service<ManageCVNode>::SharedPtr manage_service;                 ///< Service to register the CVNode
+    rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr prepare_service;      ///< Service to prepare the CVNode
+    rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr measurements_service; ///< Service to get inference measurements
 
-    rclcpp::Service<ManageCVNode>::SharedPtr manage_service; ///< Service to register the CVNode
-
-    /// Client to communicate with DataProvider
-    rclcpp::Service<RuntimeProtocolSrv>::SharedPtr dataprovider_service;
-
+    /// Server to communicate with DataProvider
+    rclcpp_action::Server<SegmentationAction>::SharedPtr dataprovider_server;
     /// Publisher to publish input data to GUI
     rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr gui_input_publisher;
-
     /// Publisher to publish output data to GUI
     rclcpp::Publisher<SegmentationMsg>::SharedPtr gui_output_publisher;
 
@@ -214,14 +214,11 @@ private:
 
     /// Inference request for registered CVNode-like node
     SegmentCVNodeSrv::Request::SharedPtr cvnode_request = std::make_shared<SegmentCVNodeSrv::Request>();
-
+    /// Inference response from registered CVNode-like node
+    SegmentCVNodeSrv::Response::SharedPtr cvnode_response = std::make_shared<SegmentCVNodeSrv::Response>();
     // Shared future from last inference request to CVNode-like node
     rclcpp::Client<SegmentCVNodeSrv>::SharedFuture cvnode_future = rclcpp::Client<SegmentCVNodeSrv>::SharedFuture();
 
-    /// Function responsible for executing proper inference scenario strategy
-    std::function<void(const std::shared_ptr<rmw_request_id_t>)> inference_scenario_func = nullptr;
-
-    nlohmann::json output_data;                  ///< Output data from inference in JSON format
     nlohmann::json measurements;                 ///< Measurements from inference in JSON format
     std::chrono::steady_clock::time_point start; ///< Timestamp indicating start of the inference
     std::chrono::steady_clock::time_point end;   ///< Timestamp indicating ending of the inference

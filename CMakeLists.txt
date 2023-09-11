@@ -20,6 +20,7 @@ find_package(ament_cmake REQUIRED)
 find_package(kenning_computer_vision_msgs REQUIRED)
 find_package(rcl_interfaces REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rclcpp_action REQUIRED)
 find_package(rclcpp_components REQUIRED)
 find_package(std_srvs REQUIRED)
 
@@ -60,6 +61,7 @@ ament_target_dependencies(${PROJECT_NAME}
     kenning_computer_vision_msgs
     rcl_interfaces
     rclcpp
+    rclcpp_action
     rclcpp_components
     std_srvs
 )
