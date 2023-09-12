@@ -24,15 +24,17 @@ using SegmentCVNodeSrv = kenning_computer_vision_msgs::srv::SegmentCVNodeSrv;
 using SegmentationMsg = kenning_computer_vision_msgs::msg::SegmentationMsg;
 using SegmentationAction = kenning_computer_vision_msgs::action::SegmentationAction;
 
+using Trigger = std_srvs::srv::Trigger;
+
 /**
  * Structure holding information about registered CVNode-like node.
  */
 struct CVNode
 {
-    std::string name;                                          ///< Name of the CVNode-like node.
-    rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr prepare; ///< Client to prepare the CVNode-like node.
-    rclcpp::Client<SegmentCVNodeSrv>::SharedPtr process;       ///< Client to run inference on the CVNode-like node.
-    rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr cleanup; ///< Client to cleanup the CVNode-like node.
+    std::string name;                                    ///< Name of the CVNode-like node.
+    rclcpp::Client<Trigger>::SharedPtr prepare;          ///< Client to prepare the CVNode-like node.
+    rclcpp::Client<SegmentCVNodeSrv>::SharedPtr process; ///< Client to run inference on the CVNode-like node.
+    rclcpp::Client<Trigger>::SharedPtr cleanup;          ///< Client to cleanup the CVNode-like node.
 
     /**
      * Constructor.
@@ -44,9 +46,9 @@ struct CVNode
      */
     CVNode(
         const std::string &name,
-        rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr prepare,
+        rclcpp::Client<Trigger>::SharedPtr prepare,
         rclcpp::Client<SegmentCVNodeSrv>::SharedPtr process,
-        rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr cleanup)
+        rclcpp::Client<Trigger>::SharedPtr cleanup)
         : name(name), prepare(prepare), process(process), cleanup(cleanup)
     {
     }
@@ -92,10 +94,10 @@ private:
         [[maybe_unused]] ManageCVNode::Response::SharedPtr response);
 
     /**
-     * Handles the testing process goal.
+     * Decides whether accept or reject process request.
      *
-     * @param uuid UUID of the testing process.
-     * @param goal Pointer to the goal of the testing process.
+     * @param uuid UUID of the process request.
+     * @param goal Pointer to the goal of process request.
      *
      * @return Response of the testing process.
      */
@@ -103,9 +105,9 @@ private:
     handle_test_process_goal(const rclcpp_action::GoalUUID &uuid, std::shared_ptr<const SegmentationAction::Goal> goal);
 
     /**
-     * Handles the testing process cancel request.
+     * Handles cancelation of process request.
      *
-     * @param goal_handle Pointer to the goal handle of the testing process.
+     * @param goal_handle Pointer to the goal handle of process request.
      *
      * @return Cancel response of the testing process.
      */
@@ -113,10 +115,9 @@ private:
     handle_test_process_cancel(const std::shared_ptr<rclcpp_action::ServerGoalHandle<SegmentationAction>> goal_handle);
 
     /**
-     * Handles the testing process accepted request.
-     * Starts the testing process.
+     * Executes processing request.
      *
-     * @param goal_handle Pointer to the goal handle of the testing process.
+     * @param goal_handle Pointer to the goal handle of process request.
      */
     void handle_test_process_accepted(
         const std::shared_ptr<rclcpp_action::ServerGoalHandle<SegmentationAction>> goal_handle);
@@ -127,20 +128,16 @@ private:
      * @param header Header of the service request.
      * @param request Request of the service.
      */
-    void prepare_node(
-        const std::shared_ptr<rmw_request_id_t> header,
-        const std_srvs::srv::Trigger::Request::SharedPtr request);
+    void prepare_node(const std::shared_ptr<rmw_request_id_t> header, const Trigger::Request::SharedPtr request);
 
     /**
      * Uploads time measurements of inference testing in a JSON-encoded string.
      * Performs cleanup of the CVNode-like node.
      *
-     * @param header Header of the service request.
      * @param request Request of the service.
+     * @param response Response to the service.
      */
-    void upload_measurements(
-        const std::shared_ptr<rmw_request_id_t> header,
-        const std_srvs::srv::Trigger::Request::SharedPtr request);
+    void upload_measurements(const Trigger::Request::SharedPtr request, Trigger::Response::SharedPtr response);
 
     /**
      * Synthetic testing scenario.
@@ -195,9 +192,9 @@ private:
         return true;
     }
 
-    rclcpp::Service<ManageCVNode>::SharedPtr manage_service;                 ///< Service to register the CVNode
-    rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr prepare_service;      ///< Service to prepare the CVNode
-    rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr measurements_service; ///< Service to get inference measurements
+    rclcpp::Service<ManageCVNode>::SharedPtr manage_service;  ///< Service to register the CVNode
+    rclcpp::Service<Trigger>::SharedPtr prepare_service;      ///< Service to prepare the CVNode
+    rclcpp::Service<Trigger>::SharedPtr measurements_service; ///< Service to get inference measurements
 
     /// Server to communicate with DataProvider
     rclcpp_action::Server<SegmentationAction>::SharedPtr dataprovider_server;

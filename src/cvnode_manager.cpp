@@ -18,15 +18,14 @@ CVNodeManager::CVNodeManager(const rclcpp::NodeOptions &options) : Node("cvnode_
         "cvnode_register",
         std::bind(&CVNodeManager::manage_node_callback, this, std::placeholders::_1, std::placeholders::_2));
 
-    prepare_service = create_service<std_srvs::srv::Trigger>(
+    prepare_service = create_service<Trigger>(
         "cvnode_prepare",
-        [this](const std::shared_ptr<rmw_request_id_t> header, const std_srvs::srv::Trigger::Request::SharedPtr request)
+        [this](const std::shared_ptr<rmw_request_id_t> header, const Trigger::Request::SharedPtr request)
         { std::thread([this, header, request]() { prepare_node(header, request); }).detach(); });
 
-    measurements_service = create_service<std_srvs::srv::Trigger>(
+    measurements_service = create_service<Trigger>(
         "cvnode_measurements",
-        [this](const std::shared_ptr<rmw_request_id_t> header, const std_srvs::srv::Trigger::Request::SharedPtr request)
-        { std::thread([this, header, request]() { upload_measurements(header, request); }).detach(); });
+        std::bind(&CVNodeManager::upload_measurements, this, std::placeholders::_1, std::placeholders::_2));
 
     dataprovider_server = rclcpp_action::create_server<SegmentationAction>(
         this,
@@ -97,7 +96,7 @@ rclcpp_action::CancelResponse CVNodeManager::handle_test_process_cancel(
 {
     RCLCPP_DEBUG(get_logger(), "Received request to cancel goal");
     RCLCPP_DEBUG(get_logger(), "Cleaning up CVNode");
-    std_srvs::srv::Trigger::Request::SharedPtr request = std::make_shared<std_srvs::srv::Trigger::Request>();
+    Trigger::Request::SharedPtr request = std::make_shared<Trigger::Request>();
     cv_node.cleanup->async_send_request(request);
     return rclcpp_action::CancelResponse::ACCEPT;
 }
@@ -110,13 +109,13 @@ void CVNodeManager::handle_test_process_accepted(
         {
             std::string scenario = get_parameter("scenario").as_string();
             SegmentationAction::Result::SharedPtr result = std::make_shared<SegmentationAction::Result>();
+            result->success = false;
             if (scenario == "synthetic")
             {
                 RCLCPP_DEBUG(get_logger(), "Executing synthetic scenario");
                 if (!execute_synthetic_inference_scenario())
                 {
                     RCLCPP_ERROR(get_logger(), "Failed execution of synthetic scenario");
-                    result->success = false;
                     goal_handle->abort(result);
                     return;
                 }
@@ -127,7 +126,6 @@ void CVNodeManager::handle_test_process_accepted(
                 if (!execute_real_world_first_inference_scenario())
                 {
                     RCLCPP_ERROR(get_logger(), "Failed execution of real-world scenario with first frame");
-                    result->success = false;
                     goal_handle->abort(result);
                     return;
                 }
@@ -138,7 +136,6 @@ void CVNodeManager::handle_test_process_accepted(
                 if (!execute_real_world_last_inference_scenario())
                 {
                     RCLCPP_ERROR(get_logger(), "Failed execution of real-world scenario with last frame");
-                    result->success = false;
                     goal_handle->abort(result);
                     return;
                 }
@@ -146,16 +143,16 @@ void CVNodeManager::handle_test_process_accepted(
             else
             {
                 RCLCPP_ERROR(get_logger(), "Unknown scenario '%s'", scenario.c_str());
-                result->success = false;
                 goal_handle->abort(result);
                 return;
             }
+            result->success = true;
             result->output = cvnode_response->output;
+
             if (!get_parameter("preserve_output").as_bool())
             {
                 cvnode_response->output.clear();
             }
-
             if (get_parameter("publish_visualizations").as_bool())
             {
                 for (auto &output : result->output)
@@ -163,6 +160,7 @@ void CVNodeManager::handle_test_process_accepted(
                     gui_output_publisher->publish(output);
                 }
             }
+
             RCLCPP_DEBUG(get_logger(), "Successfully executed scenario");
             goal_handle->succeed(result);
         })
@@ -171,7 +169,7 @@ void CVNodeManager::handle_test_process_accepted(
 
 void CVNodeManager::prepare_node(
     const std::shared_ptr<rmw_request_id_t> header,
-    [[maybe_unused]] const std::shared_ptr<std_srvs::srv::Trigger::Request> request)
+    [[maybe_unused]] const std::shared_ptr<Trigger::Request> request)
 {
     if (cv_node.process == nullptr)
     {
@@ -181,11 +179,11 @@ void CVNodeManager::prepare_node(
         cvnode_wait_cv.wait(lk);
     }
 
-    std_srvs::srv::Trigger::Response response;
     RCLCPP_DEBUG(get_logger(), "Preparing node");
     if (!cv_node.prepare->wait_for_service(std::chrono::seconds(1)))
     {
         RCLCPP_ERROR(get_logger(), "Node to prepare is not ready");
+        Trigger::Response response;
         response.success = false;
         response.message = "Node to prepare is not ready";
         prepare_service->send_response(*header, response);
@@ -195,10 +193,10 @@ void CVNodeManager::prepare_node(
     {
         cv_node.prepare->async_send_request(
             request,
-            [this, header](rclcpp::Client<std_srvs::srv::Trigger>::SharedFuture future)
+            [this, header](rclcpp::Client<Trigger>::SharedFuture future)
             {
                 auto response = future.get();
-                std_srvs::srv::Trigger::Response runtime_response;
+                Trigger::Response runtime_response;
                 if (!response->success)
                 {
                     RCLCPP_ERROR(get_logger(), "Error while loading the model");
@@ -220,23 +218,21 @@ void CVNodeManager::prepare_node(
 }
 
 void CVNodeManager::upload_measurements(
-    const std::shared_ptr<rmw_request_id_t> header,
-    [[maybe_unused]] const std_srvs::srv::Trigger::Request::SharedPtr request)
+    const Trigger::Request::SharedPtr request,
+    Trigger::Response::SharedPtr response)
 {
-    std_srvs::srv::Trigger::Response response = std_srvs::srv::Trigger::Response();
-    response.message = measurements.dump();
-    if (response.message.empty())
+    response->message = measurements.dump();
+    if (response->message.empty())
     {
-        response.success = false;
-        response.message = "No measurements to upload";
-        measurements_service->send_response(*header, response);
+        RCLCPP_ERROR(get_logger(), "No measurements to upload");
+        response->success = false;
+        response->message = "No measurements to upload";
         return;
     }
-    response.success = true;
+    response->success = true;
     RCLCPP_DEBUG(get_logger(), "Cleaning up CVNode");
     cv_node.cleanup->async_send_request(request);
     RCLCPP_DEBUG(get_logger(), "Uploading measurements");
-    measurements_service->send_response(*header, response);
 }
 
 bool CVNodeManager::execute_synthetic_inference_scenario()
@@ -251,6 +247,7 @@ bool CVNodeManager::execute_synthetic_inference_scenario()
 
     start = steady_clock::now();
     cvnode_future = cv_node.process->async_send_request(cvnode_request).future.share();
+    cvnode_request->input.clear();
     cvnode_future.wait();
     cvnode_response = cvnode_future.get();
     cvnode_future = std::shared_future<SegmentCVNodeSrv::Response::SharedPtr>();
@@ -289,6 +286,7 @@ bool CVNodeManager::execute_real_world_last_inference_scenario()
         cvnode_response = cvnode_future.get();
         if (!cvnode_response->success)
         {
+            cvnode_future = std::shared_future<SegmentCVNodeSrv::Response::SharedPtr>();
             RCLCPP_ERROR(get_logger(), "Error while processing data.");
             return false;
         }
@@ -327,16 +325,18 @@ bool CVNodeManager::execute_real_world_first_inference_scenario()
         cvnode_response = cvnode_future.get();
         if (!cvnode_response->success)
         {
+            cvnode_future = std::shared_future<SegmentCVNodeSrv::Response::SharedPtr>();
             RCLCPP_ERROR(get_logger(), "Error while processing data");
             return false;
         }
         end = steady_clock::now();
-        cvnode_future = std::shared_future<SegmentCVNodeSrv::Response::SharedPtr>();
 
         float duration = duration_cast<milliseconds>(end - start).count() / 1000.0;
         measurements.at("target_inference_step").push_back(duration);
         measurements.at("target_inference_step_timestamp")
             .push_back(duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count() / 1000.0);
+
+        cvnode_future = std::shared_future<SegmentCVNodeSrv::Response::SharedPtr>();
     }
     return true;
 }
@@ -381,8 +381,8 @@ void CVNodeManager::register_node_callback(
     }
 
     // Create clients to communicate with the node
-    rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr cvnode_prepare;
-    if (!initialize_service_client<std_srvs::srv::Trigger>(request->prepare_srv_name, cvnode_prepare))
+    rclcpp::Client<Trigger>::SharedPtr cvnode_prepare;
+    if (!initialize_service_client<Trigger>(request->prepare_srv_name, cvnode_prepare))
     {
         response->message = "Could not initialize the prepare service client";
         RCLCPP_ERROR(get_logger(), "Could not initialize the prepare service client");
@@ -395,8 +395,8 @@ void CVNodeManager::register_node_callback(
         RCLCPP_ERROR(get_logger(), "Could not initialize the process service client");
         return;
     }
-    rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr cvnode_cleanup;
-    if (!initialize_service_client<std_srvs::srv::Trigger>(request->cleanup_srv_name, cvnode_cleanup))
+    rclcpp::Client<Trigger>::SharedPtr cvnode_cleanup;
+    if (!initialize_service_client<Trigger>(request->cleanup_srv_name, cvnode_cleanup))
     {
         response->message = "Could not initialize the cleanup service client";
         RCLCPP_ERROR(get_logger(), "Could not initialize the cleanup service client");
