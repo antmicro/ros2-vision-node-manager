@@ -368,14 +368,14 @@ void CVNodeManager::register_node_callback(
 {
     std::string node_name = request->node_name;
     response->status = false;
-    RCLCPP_DEBUG(get_logger(), "[REGISTER] Registering the '%s' node", node_name.c_str());
+    RCLCPP_DEBUG(get_logger(), "Registering the '%s' node", node_name.c_str());
 
     if (cv_node.process != nullptr)
     {
         response->message = "There is already a node registered";
         RCLCPP_WARN(
             get_logger(),
-            "[REGISTER] Could not register the node '%s' because there is already a node registered",
+            "Could not register the node '%s' because there is already a node registered",
             node_name.c_str());
         return;
     }
@@ -385,21 +385,21 @@ void CVNodeManager::register_node_callback(
     if (!initialize_service_client<std_srvs::srv::Trigger>(request->prepare_srv_name, cvnode_prepare))
     {
         response->message = "Could not initialize the prepare service client";
-        RCLCPP_ERROR(get_logger(), "[REGISTER] Could not initialize the prepare service client");
+        RCLCPP_ERROR(get_logger(), "Could not initialize the prepare service client");
         return;
     }
     rclcpp::Client<SegmentCVNodeSrv>::SharedPtr cvnode_process;
     if (!initialize_service_client<SegmentCVNodeSrv>(request->process_srv_name, cvnode_process))
     {
         response->message = "Could not initialize the process service client";
-        RCLCPP_ERROR(get_logger(), "[REGISTER] Could not initialize the process service client");
+        RCLCPP_ERROR(get_logger(), "Could not initialize the process service client");
         return;
     }
     rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr cvnode_cleanup;
     if (!initialize_service_client<std_srvs::srv::Trigger>(request->cleanup_srv_name, cvnode_cleanup))
     {
         response->message = "Could not initialize the cleanup service client";
-        RCLCPP_ERROR(get_logger(), "[REGISTER] Could not initialize the cleanup service client");
+        RCLCPP_ERROR(get_logger(), "Could not initialize the cleanup service client");
         return;
     }
 
@@ -408,7 +408,7 @@ void CVNodeManager::register_node_callback(
     cv_node = CVNode(node_name, cvnode_prepare, cvnode_process, cvnode_cleanup);
 
     cvnode_wait_cv.notify_one();
-    RCLCPP_DEBUG(get_logger(), "[REGISTER] The node '%s' is registered", node_name.c_str());
+    RCLCPP_DEBUG(get_logger(), "The node '%s' is registered", node_name.c_str());
 }
 
 void CVNodeManager::unregister_node_callback(
@@ -417,15 +417,15 @@ void CVNodeManager::unregister_node_callback(
 {
     std::string node_name = request->node_name;
 
-    RCLCPP_DEBUG(get_logger(), "[UNREGISTER] Unregistering the node '%s'", node_name.c_str());
+    RCLCPP_DEBUG(get_logger(), "Unregistering the node '%s'", node_name.c_str());
     if (cv_node.name != node_name)
     {
-        RCLCPP_WARN(get_logger(), "[UNREGISTER] The node '%s' is not registered", node_name.c_str());
+        RCLCPP_WARN(get_logger(), "The node '%s' is not registered", node_name.c_str());
         return;
     }
 
     cv_node = CVNode();
-    RCLCPP_DEBUG(get_logger(), "[UNREGISTER] The node '%s' is unregistered", node_name.c_str());
+    RCLCPP_DEBUG(get_logger(), "The node '%s' is unregistered", node_name.c_str());
     return;
 }
 
