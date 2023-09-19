@@ -32,7 +32,8 @@ CVNodeManager::CVNodeManager(const rclcpp::NodeOptions &options) : Node("cvnode_
         "cvnode_process",
         std::bind(&CVNodeManager::handle_test_process_request, this, std::placeholders::_1, std::placeholders::_2),
         std::bind(&CVNodeManager::handle_test_process_cancel, this, std::placeholders::_1),
-        std::bind(&CVNodeManager::handle_test_process_start_processing, this, std::placeholders::_1));
+        [this](const std::shared_ptr<rclcpp_action::ServerGoalHandle<SegmentationAction>> goal_handle)
+        { std::thread([this, goal_handle]() { handle_test_process_start_processing(goal_handle); }).detach(); });
 
     rcl_interfaces::msg::ParameterDescriptor descriptor;
 
@@ -104,67 +105,62 @@ rclcpp_action::CancelResponse CVNodeManager::handle_test_process_cancel(
 void CVNodeManager::handle_test_process_start_processing(
     const std::shared_ptr<rclcpp_action::ServerGoalHandle<SegmentationAction>> goal_handle)
 {
-    std::thread(
-        [this, goal_handle]()
+    std::string scenario = get_parameter("scenario").as_string();
+    SegmentationAction::Result::SharedPtr result = std::make_shared<SegmentationAction::Result>();
+    result->success = false;
+    if (scenario == "synthetic")
+    {
+        RCLCPP_DEBUG(get_logger(), "Executing synthetic scenario");
+        if (!execute_synthetic_inference_scenario())
         {
-            std::string scenario = get_parameter("scenario").as_string();
-            SegmentationAction::Result::SharedPtr result = std::make_shared<SegmentationAction::Result>();
-            result->success = false;
-            if (scenario == "synthetic")
-            {
-                RCLCPP_DEBUG(get_logger(), "Executing synthetic scenario");
-                if (!execute_synthetic_inference_scenario())
-                {
-                    RCLCPP_ERROR(get_logger(), "Failed execution of synthetic scenario");
-                    goal_handle->abort(result);
-                    return;
-                }
-            }
-            else if (scenario == "real_world_first")
-            {
-                RCLCPP_DEBUG(get_logger(), "Executing real-world scenario with first frame");
-                if (!execute_real_world_first_inference_scenario())
-                {
-                    RCLCPP_ERROR(get_logger(), "Failed execution of real-world scenario with first frame");
-                    goal_handle->abort(result);
-                    return;
-                }
-            }
-            else if (scenario == "real_world_last")
-            {
-                RCLCPP_DEBUG(get_logger(), "Executing real-world scenario with last frame");
-                if (!execute_real_world_last_inference_scenario())
-                {
-                    RCLCPP_ERROR(get_logger(), "Failed execution of real-world scenario with last frame");
-                    goal_handle->abort(result);
-                    return;
-                }
-            }
-            else
-            {
-                RCLCPP_ERROR(get_logger(), "Unknown scenario '%s'", scenario.c_str());
-                goal_handle->abort(result);
-                return;
-            }
-            result->success = true;
-            result->output = cvnode_response->output;
+            RCLCPP_ERROR(get_logger(), "Failed execution of synthetic scenario");
+            goal_handle->abort(result);
+            return;
+        }
+    }
+    else if (scenario == "real_world_first")
+    {
+        RCLCPP_DEBUG(get_logger(), "Executing real-world scenario with first frame");
+        if (!execute_real_world_first_inference_scenario())
+        {
+            RCLCPP_ERROR(get_logger(), "Failed execution of real-world scenario with first frame");
+            goal_handle->abort(result);
+            return;
+        }
+    }
+    else if (scenario == "real_world_last")
+    {
+        RCLCPP_DEBUG(get_logger(), "Executing real-world scenario with last frame");
+        if (!execute_real_world_last_inference_scenario())
+        {
+            RCLCPP_ERROR(get_logger(), "Failed execution of real-world scenario with last frame");
+            goal_handle->abort(result);
+            return;
+        }
+    }
+    else
+    {
+        RCLCPP_ERROR(get_logger(), "Unknown scenario '%s'", scenario.c_str());
+        goal_handle->abort(result);
+        return;
+    }
+    result->success = true;
+    result->output = cvnode_response->output;
 
-            if (!get_parameter("preserve_output").as_bool())
-            {
-                cvnode_response->output.clear();
-            }
-            if (get_parameter("publish_visualizations").as_bool())
-            {
-                for (auto &output : result->output)
-                {
-                    gui_output_publisher->publish(output);
-                }
-            }
+    if (!get_parameter("preserve_output").as_bool())
+    {
+        cvnode_response->output.clear();
+    }
+    if (get_parameter("publish_visualizations").as_bool())
+    {
+        for (auto &output : result->output)
+        {
+            gui_output_publisher->publish(output);
+        }
+    }
 
-            RCLCPP_DEBUG(get_logger(), "Successfully executed scenario");
-            goal_handle->succeed(result);
-        })
-        .detach();
+    RCLCPP_DEBUG(get_logger(), "Successfully executed scenario");
+    goal_handle->succeed(result);
 }
 
 void CVNodeManager::prepare_node(
