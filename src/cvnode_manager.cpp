@@ -68,6 +68,16 @@ CVNodeManager::CVNodeManager(const rclcpp::NodeOptions &options) : Node("cvnode_
     // Publishers for input and output data
     gui_input_publisher = create_publisher<sensor_msgs::msg::Image>("input_frame", 1);
     gui_output_publisher = create_publisher<SegmentationMsg>("output_segmentations", 1);
+
+    // Real world timer which is manually triggered
+    real_world_timer = create_wall_timer(
+        std::chrono::milliseconds(get_parameter("inference_timeout_ms").as_int()),
+        [this]()
+        {
+            real_world_timer->cancel();
+            publish_data();
+        });
+    real_world_timer->cancel();
 }
 
 rclcpp_action::GoalResponse CVNodeManager::handle_test_process_request(
@@ -106,61 +116,35 @@ void CVNodeManager::handle_test_process_start_processing(
     const std::shared_ptr<rclcpp_action::ServerGoalHandle<SegmentationAction>> goal_handle)
 {
     std::string scenario = get_parameter("scenario").as_string();
-    SegmentationAction::Result::SharedPtr result = std::make_shared<SegmentationAction::Result>();
-    result->success = false;
+    request_handle = goal_handle;
     if (scenario == "synthetic")
     {
         RCLCPP_DEBUG(get_logger(), "Executing synthetic scenario");
-        if (!execute_synthetic_inference_scenario())
-        {
-            RCLCPP_ERROR(get_logger(), "Failed execution of synthetic scenario");
-            goal_handle->abort(result);
-            return;
-        }
+        execute_synthetic_inference_scenario();
+        return;
     }
     else if (scenario == "real_world_first")
     {
         RCLCPP_DEBUG(get_logger(), "Executing real-world scenario with first frame");
-        if (!execute_real_world_first_inference_scenario())
-        {
-            RCLCPP_ERROR(get_logger(), "Failed execution of real-world scenario with first frame");
-            goal_handle->abort(result);
-            return;
-        }
+        execute_real_world_first_inference_scenario();
+        real_world_timer->reset();
+        return;
     }
     else if (scenario == "real_world_last")
     {
         RCLCPP_DEBUG(get_logger(), "Executing real-world scenario with last frame");
-        if (!execute_real_world_last_inference_scenario())
-        {
-            RCLCPP_ERROR(get_logger(), "Failed execution of real-world scenario with last frame");
-            goal_handle->abort(result);
-            return;
-        }
+        execute_real_world_last_inference_scenario();
+        real_world_timer->reset();
+        return;
     }
     else
     {
         RCLCPP_ERROR(get_logger(), "Unknown scenario '%s'", scenario.c_str());
+        std::shared_ptr<SegmentationAction::Result> result = std::make_shared<SegmentationAction::Result>();
+        result->success = false;
         goal_handle->abort(result);
         return;
     }
-    result->success = true;
-    result->output = cvnode_response->output;
-
-    if (!get_parameter("preserve_output").as_bool())
-    {
-        cvnode_response->output.clear();
-    }
-    if (get_parameter("publish_visualizations").as_bool())
-    {
-        for (auto &output : result->output)
-        {
-            gui_output_publisher->publish(output);
-        }
-    }
-
-    RCLCPP_DEBUG(get_logger(), "Successfully executed scenario");
-    goal_handle->succeed(result);
 }
 
 void CVNodeManager::prepare_node(
@@ -231,110 +215,147 @@ void CVNodeManager::upload_measurements(
     RCLCPP_DEBUG(get_logger(), "Uploading measurements");
 }
 
-bool CVNodeManager::execute_synthetic_inference_scenario()
+void CVNodeManager::publish_data()
+{
+    if (request_handle == nullptr)
+    {
+        RCLCPP_DEBUG(get_logger(), "No request handle. Aborting data publishing");
+        return;
+    }
+
+    SegmentationAction::Result::SharedPtr result = std::make_shared<SegmentationAction::Result>();
+    result->success = true;
+    result->output = cvnode_response->output;
+    if (!get_parameter("preserve_output").as_bool())
+    {
+        cvnode_response->output.clear();
+    }
+    if (get_parameter("publish_visualizations").as_bool())
+    {
+        for (auto &output : result->output)
+        {
+            gui_output_publisher->publish(output);
+        }
+    }
+    request_handle->succeed(result);
+}
+
+void CVNodeManager::execute_synthetic_inference_scenario()
+{
+    using namespace std::chrono;
+
+    SegmentationAction::Result::SharedPtr result = std::make_shared<SegmentationAction::Result>();
+    result->success = false;
+    if (cvnode_request->input.empty())
+    {
+        RCLCPP_ERROR(get_logger(), "No input data to process");
+        request_handle->abort(result);
+        return;
+    }
+
+    start = steady_clock::now();
+    cv_node.process->async_send_request(
+        cvnode_request,
+        [this, result](const rclcpp::Client<SegmentCVNodeSrv>::SharedFuture future)
+        {
+            cvnode_request->input.clear();
+            cvnode_response = future.get();
+            if (!cvnode_response->success)
+            {
+                RCLCPP_ERROR(get_logger(), "Error while processing data");
+                request_handle->abort(result);
+                return;
+            }
+            end = steady_clock::now();
+
+            // Save measurements
+            float duration = duration_cast<milliseconds>(end - start).count() / 1000.0;
+            measurements.at("target_inference_step").push_back(duration);
+            measurements.at("target_inference_step_timestamp")
+                .push_back(duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count() / 1000.0);
+
+            publish_data();
+        });
+}
+
+void CVNodeManager::execute_real_world_last_inference_scenario()
 {
     using namespace std::chrono;
 
     if (cvnode_request->input.empty())
     {
+        auto result = std::make_shared<SegmentationAction::Result>();
+        result->success = false;
         RCLCPP_ERROR(get_logger(), "No input data to process");
-        return false;
+        request_handle->abort(result);
+        request_handle.reset();
+        return;
     }
 
+    // Local copy of uuid
+    const rclcpp_action::GoalUUID uuid = request_handle->get_goal_id();
+
+    // Send inference request
     start = steady_clock::now();
-    cvnode_future = cv_node.process->async_send_request(cvnode_request).future.share();
-    cvnode_request->input.clear();
-    cvnode_future.wait();
-    cvnode_response = cvnode_future.get();
-    cvnode_future = std::shared_future<SegmentCVNodeSrv::Response::SharedPtr>();
-    if (!cvnode_response->success)
-    {
-        RCLCPP_ERROR(get_logger(), "Error while processing data");
-        return false;
-    }
-    end = steady_clock::now();
+    cv_node.process->async_send_request(
+        cvnode_request,
+        [this, uuid](const rclcpp::Client<SegmentCVNodeSrv>::SharedFuture future)
+        {
+            if (request_handle->get_goal_id() != uuid)
+            {
+                RCLCPP_DEBUG(get_logger(), "Goal was canceled");
+                return;
+            }
+            cvnode_request->input.clear();
+            cvnode_response = future.get();
+            end = steady_clock::now();
 
-    // Save measurements
-    float duration = duration_cast<milliseconds>(end - start).count() / 1000.0;
-    measurements.at("target_inference_step").push_back(duration);
-    measurements.at("target_inference_step_timestamp")
-        .push_back(duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count() / 1000.0);
-    return true;
+            // Measure inference time
+            float duration = duration_cast<milliseconds>(end - start).count() / 1000.0;
+            measurements.at("target_inference_step").push_back(duration);
+            measurements.at("target_inference_step_timestamp")
+                .push_back(duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count() / 1000.0);
+        });
 }
 
-bool CVNodeManager::execute_real_world_last_inference_scenario()
+void CVNodeManager::execute_real_world_first_inference_scenario()
 {
     using namespace std::chrono;
+
+    if (processing_request)
+    {
+        RCLCPP_DEBUG(get_logger(), "Request is already in progress");
+        return;
+    }
 
     if (cvnode_request->input.empty())
     {
+        auto result = std::make_shared<SegmentationAction::Result>();
+        result->success = false;
         RCLCPP_ERROR(get_logger(), "No input data to process");
-        return false;
+        request_handle->abort(result);
+        request_handle.reset();
+        return;
     }
+    processing_request = true;
 
-    /// Send inference request
+    // Send inference request
     start = steady_clock::now();
-    cvnode_future = cv_node.process->async_send_request(cvnode_request).future.share();
-    cvnode_request->input.clear();
-    if (cvnode_future.wait_for(milliseconds(get_parameter("inference_timeout_ms").as_int())) ==
-        std::future_status::ready)
-    {
-        cvnode_response = cvnode_future.get();
-        if (!cvnode_response->success)
+    cv_node.process->async_send_request(
+        cvnode_request,
+        [this](const rclcpp::Client<SegmentCVNodeSrv>::SharedFuture future)
         {
-            cvnode_future = std::shared_future<SegmentCVNodeSrv::Response::SharedPtr>();
-            RCLCPP_ERROR(get_logger(), "Error while processing data.");
-            return false;
-        }
-    }
-    end = steady_clock::now();
+            cvnode_request->input.clear();
+            cvnode_response = future.get();
+            end = steady_clock::now();
+            processing_request = false;
 
-    // Measure inference time
-    float duration = duration_cast<milliseconds>(end - start).count() / 1000.0;
-    measurements.at("target_inference_step").push_back(duration);
-    measurements.at("target_inference_step_timestamp")
-        .push_back(duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count() / 1000.0);
-
-    // Reset future to make sure that it is not reused
-    cvnode_future = std::future<SegmentCVNodeSrv::Response::SharedPtr>();
-    return true;
-}
-
-bool CVNodeManager::execute_real_world_first_inference_scenario()
-{
-    using namespace std::chrono;
-
-    if (!cvnode_future.valid())
-    {
-        if (cvnode_request->input.empty())
-        {
-            RCLCPP_ERROR(get_logger(), "No data to process");
-            return false;
-        }
-        start = steady_clock::now();
-        cvnode_future = cv_node.process->async_send_request(cvnode_request).future.share();
-        cvnode_request->input.clear();
-    }
-    if (cvnode_future.wait_for(milliseconds(get_parameter("inference_timeout_ms").as_int())) ==
-        std::future_status::ready)
-    {
-        cvnode_response = cvnode_future.get();
-        if (!cvnode_response->success)
-        {
-            cvnode_future = std::shared_future<SegmentCVNodeSrv::Response::SharedPtr>();
-            RCLCPP_ERROR(get_logger(), "Error while processing data");
-            return false;
-        }
-        end = steady_clock::now();
-
-        float duration = duration_cast<milliseconds>(end - start).count() / 1000.0;
-        measurements.at("target_inference_step").push_back(duration);
-        measurements.at("target_inference_step_timestamp")
-            .push_back(duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count() / 1000.0);
-
-        cvnode_future = std::shared_future<SegmentCVNodeSrv::Response::SharedPtr>();
-    }
-    return true;
+            // Measure inference time
+            float duration = duration_cast<milliseconds>(end - start).count() / 1000.0;
+            measurements.at("target_inference_step").push_back(duration);
+            measurements.at("target_inference_step_timestamp")
+                .push_back(duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count() / 1000.0);
+        });
 }
 
 void CVNodeManager::manage_node_callback(

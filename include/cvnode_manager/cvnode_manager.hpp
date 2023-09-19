@@ -124,6 +124,12 @@ private:
         const std::shared_ptr<rclcpp_action::ServerGoalHandle<SegmentationAction>> goal_handle);
 
     /**
+     * Responds to the process request.
+     * Publishes data to visualization topic if it is enabled.
+     */
+    void publish_data();
+
+    /**
      * Prepares CVNode-like node for the testing process.
      *
      * @param header Header of the service request.
@@ -143,26 +149,20 @@ private:
     /**
      * Synthetic testing scenario.
      * Forwards input data to the CVNode-like node and waits for response.
-     *
-     * @return True if scenario succeeded, False otherwise.
      */
-    bool execute_synthetic_inference_scenario();
+    void execute_synthetic_inference_scenario();
 
     /**
      * Real-world testing scenario for the first request.
      * Tries to always finish the oldest request by ignoring the newer ones.
-     *
-     * @return True if scenario succeeded, False otherwise.
      */
-    bool execute_real_world_first_inference_scenario();
+    void execute_real_world_first_inference_scenario();
 
     /**
      * Real-world testing scenario for the last request.
      * Tries to always process the newest request by aborting the older ones.
-     *
-     * @return True if scenario succeeded, False otherwise.
      */
-    bool execute_real_world_last_inference_scenario();
+    void execute_real_world_last_inference_scenario();
 
     /**
      * Creates a client to a service.
@@ -210,16 +210,19 @@ private:
     bool dataprovider_initialized = false; ///< Flag indicating whether the DataProvider is initialized
     CVNode cv_node = CVNode();             ///< Registered CVNode-like node used for inference
 
+    ///< Flag indicating whether the CVNode-like node is processing a request
+    bool processing_request = false;
     /// Inference request for registered CVNode-like node
     SegmentCVNodeSrv::Request::SharedPtr cvnode_request = std::make_shared<SegmentCVNodeSrv::Request>();
     /// Inference response from registered CVNode-like node
     SegmentCVNodeSrv::Response::SharedPtr cvnode_response = std::make_shared<SegmentCVNodeSrv::Response>();
-    // Shared future from last inference request to CVNode-like node
-    rclcpp::Client<SegmentCVNodeSrv>::SharedFuture cvnode_future = rclcpp::Client<SegmentCVNodeSrv>::SharedFuture();
+    /// Request handle of the inference request from DataProvider
+    std::shared_ptr<rclcpp_action::ServerGoalHandle<SegmentationAction>> request_handle;
 
-    nlohmann::json measurements;                 ///< Measurements from inference in JSON format
-    std::chrono::steady_clock::time_point start; ///< Timestamp indicating start of the inference
-    std::chrono::steady_clock::time_point end;   ///< Timestamp indicating ending of the inference
+    rclcpp::TimerBase::SharedPtr real_world_timer; ///< Timer for periodic execution of real-world inference scenarios
+    nlohmann::json measurements;                   ///< Measurements from inference in JSON format
+    std::chrono::steady_clock::time_point start;   ///< Timestamp indicating start of the inference
+    std::chrono::steady_clock::time_point end;     ///< Timestamp indicating ending of the inference
 public:
     /**
      * Constructor.
