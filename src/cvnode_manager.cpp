@@ -30,9 +30,9 @@ CVNodeManager::CVNodeManager(const rclcpp::NodeOptions &options) : Node("cvnode_
     dataprovider_server = rclcpp_action::create_server<SegmentationAction>(
         this,
         "cvnode_process",
-        std::bind(&CVNodeManager::handle_test_process_goal, this, std::placeholders::_1, std::placeholders::_2),
+        std::bind(&CVNodeManager::handle_test_process_request, this, std::placeholders::_1, std::placeholders::_2),
         std::bind(&CVNodeManager::handle_test_process_cancel, this, std::placeholders::_1),
-        std::bind(&CVNodeManager::handle_test_process_accepted, this, std::placeholders::_1));
+        std::bind(&CVNodeManager::handle_test_process_start_processing, this, std::placeholders::_1));
 
     rcl_interfaces::msg::ParameterDescriptor descriptor;
 
@@ -69,7 +69,7 @@ CVNodeManager::CVNodeManager(const rclcpp::NodeOptions &options) : Node("cvnode_
     gui_output_publisher = create_publisher<SegmentationMsg>("output_segmentations", 1);
 }
 
-rclcpp_action::GoalResponse CVNodeManager::handle_test_process_goal(
+rclcpp_action::GoalResponse CVNodeManager::handle_test_process_request(
     [[maybe_unused]] const rclcpp_action::GoalUUID &uuid,
     std::shared_ptr<const SegmentationAction::Goal> goal)
 {
@@ -101,7 +101,7 @@ rclcpp_action::CancelResponse CVNodeManager::handle_test_process_cancel(
     return rclcpp_action::CancelResponse::ACCEPT;
 }
 
-void CVNodeManager::handle_test_process_accepted(
+void CVNodeManager::handle_test_process_start_processing(
     const std::shared_ptr<rclcpp_action::ServerGoalHandle<SegmentationAction>> goal_handle)
 {
     std::thread(

@@ -94,15 +94,16 @@ private:
         [[maybe_unused]] ManageCVNode::Response::SharedPtr response);
 
     /**
-     * Decides whether accept or reject process request.
+     * Decides whether to accept or reject process request.
      *
      * @param uuid UUID of the process request.
      * @param goal Pointer to the goal of process request.
      *
      * @return Response of the testing process.
      */
-    rclcpp_action::GoalResponse
-    handle_test_process_goal(const rclcpp_action::GoalUUID &uuid, std::shared_ptr<const SegmentationAction::Goal> goal);
+    rclcpp_action::GoalResponse handle_test_process_request(
+        const rclcpp_action::GoalUUID &uuid,
+        std::shared_ptr<const SegmentationAction::Goal> goal);
 
     /**
      * Handles cancelation of process request.
@@ -119,7 +120,7 @@ private:
      *
      * @param goal_handle Pointer to the goal handle of process request.
      */
-    void handle_test_process_accepted(
+    void handle_test_process_start_processing(
         const std::shared_ptr<rclcpp_action::ServerGoalHandle<SegmentationAction>> goal_handle);
 
     /**
