@@ -253,29 +253,40 @@ void CVNodeManager::publish_data()
     request_handle->succeed(result);
 }
 
+bool CVNodeManager::is_input_data_available()
+{
+    if (cvnode_request->input.empty())
+    {
+        auto result = std::make_shared<SegmentationAction::Result>();
+        result->success = false;
+        RCLCPP_ERROR(get_logger(), "No input data to process");
+        request_handle->abort(result);
+        request_handle.reset();
+        return false;
+    }
+    return true;
+}
+
 void CVNodeManager::execute_synthetic_inference_scenario()
 {
     using namespace std::chrono;
-
-    SegmentationAction::Result::SharedPtr result = std::make_shared<SegmentationAction::Result>();
-    result->success = false;
-    if (cvnode_request->input.empty())
+    if (!is_input_data_available())
     {
-        RCLCPP_ERROR(get_logger(), "No input data to process");
-        request_handle->abort(result);
         return;
     }
 
     start = steady_clock::now();
     cv_node.process->async_send_request(
         cvnode_request,
-        [this, result](const rclcpp::Client<SegmentCVNodeSrv>::SharedFuture future)
+        [this](const rclcpp::Client<SegmentCVNodeSrv>::SharedFuture future)
         {
             cvnode_request->input.clear();
             cvnode_response = future.get();
             if (!cvnode_response->success)
             {
                 RCLCPP_ERROR(get_logger(), "Error while processing data");
+                auto result = std::make_shared<SegmentationAction::Result>();
+                result->success = false;
                 request_handle->abort(result);
                 return;
             }
@@ -295,13 +306,8 @@ void CVNodeManager::execute_real_world_last_inference_scenario()
 {
     using namespace std::chrono;
 
-    if (cvnode_request->input.empty())
+    if (!is_input_data_available())
     {
-        auto result = std::make_shared<SegmentationAction::Result>();
-        result->success = false;
-        RCLCPP_ERROR(get_logger(), "No input data to process");
-        request_handle->abort(result);
-        request_handle.reset();
         return;
     }
 
@@ -340,14 +346,8 @@ void CVNodeManager::execute_real_world_first_inference_scenario()
         RCLCPP_DEBUG(get_logger(), "Request is already in progress");
         return;
     }
-
-    if (cvnode_request->input.empty())
+    else if (!is_input_data_available())
     {
-        auto result = std::make_shared<SegmentationAction::Result>();
-        result->success = false;
-        RCLCPP_ERROR(get_logger(), "No input data to process");
-        request_handle->abort(result);
-        request_handle.reset();
         return;
     }
     processing_request = true;

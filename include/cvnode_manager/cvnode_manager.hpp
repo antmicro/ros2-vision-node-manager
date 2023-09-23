@@ -130,6 +130,13 @@ private:
     void publish_data();
 
     /**
+     * Checks if input data is available.
+     *
+     * @return True if input data is available, false otherwise.
+     */
+    bool is_input_data_available();
+
+    /**
      * Prepares CVNode-like node for the testing process.
      *
      * @param header Header of the service request.
