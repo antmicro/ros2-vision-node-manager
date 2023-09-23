@@ -198,21 +198,34 @@ void CVNodeManager::prepare_node(
 }
 
 void CVNodeManager::upload_measurements(
-    const Trigger::Request::SharedPtr request,
-    Trigger::Response::SharedPtr response)
+    const std::shared_ptr<rmw_request_id_t> header,
+    const Trigger::Request::SharedPtr request)
 {
-    response->message = measurements.dump();
-    if (response->message.empty())
-    {
-        RCLCPP_ERROR(get_logger(), "No measurements to upload");
-        response->success = false;
-        response->message = "No measurements to upload";
-        return;
-    }
-    response->success = true;
     RCLCPP_DEBUG(get_logger(), "Cleaning up CVNode");
-    cv_node.cleanup->async_send_request(request);
-    RCLCPP_DEBUG(get_logger(), "Uploading measurements");
+    cv_node.cleanup->async_send_request(
+        request,
+        [this, header](rclcpp::Client<Trigger>::SharedFuture future)
+        {
+            auto response = future.get();
+            response->message = measurements.dump();
+            if (!response->success)
+            {
+                RCLCPP_ERROR(get_logger(), "Error while cleaning up the node");
+                measurements_service->send_response(*header, *response);
+                return;
+            }
+            else if (response->message.empty())
+            {
+                RCLCPP_ERROR(get_logger(), "No measurements to upload");
+                response->success = false;
+                response->message = "No measurements to upload";
+                return;
+            }
+
+            RCLCPP_DEBUG(get_logger(), "CVNode cleaned up successfully. Uploading measurements.");
+            measurements_service->send_response(*header, *response);
+            return;
+        });
 }
 
 void CVNodeManager::publish_data()

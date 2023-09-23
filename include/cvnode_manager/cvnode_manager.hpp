@@ -141,10 +141,10 @@ private:
      * Uploads time measurements of inference testing in a JSON-encoded string.
      * Performs cleanup of the CVNode-like node.
      *
+     * @param header Header of the service request.
      * @param request Request of the service.
-     * @param response Response to the service.
      */
-    void upload_measurements(const Trigger::Request::SharedPtr request, Trigger::Response::SharedPtr response);
+    void upload_measurements(const std::shared_ptr<rmw_request_id_t> header, const Trigger::Request::SharedPtr request);
 
     /**
      * Synthetic testing scenario.
