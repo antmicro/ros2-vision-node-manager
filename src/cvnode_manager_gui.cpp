@@ -5,7 +5,7 @@
  */
 
 #include <kenning_computer_vision_msgs/msg/box_msg.hpp>
-#include <kenning_computer_vision_msgs/msg/segmentation_msg.hpp>
+#include <kenning_computer_vision_msgs/msg/frame_segmentation_msg.hpp>
 #include <opencv2/opencv.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/image.hpp>
@@ -23,7 +23,7 @@ namespace gui
 {
 
 using namespace gui_node;
-using SegmentationMsg = kenning_computer_vision_msgs::msg::SegmentationMsg;
+using FrameSegmentationMsg = kenning_computer_vision_msgs::msg::FrameSegmentationMsg;
 
 class CVNodeManagerGUI
 {
@@ -40,7 +40,7 @@ private:
      * @return sensor_msgs::msg::Image The image to display.
      */
     sensor_msgs::msg::Image prep_display(
-        SegmentationMsg::SharedPtr instance_segmentation_msg,
+        FrameSegmentationMsg::SharedPtr instance_segmentation_msg,
         std::vector<BoundingBox> &bounding_boxes,
         const std::string &filterclass,
         const float &threshold)
@@ -50,17 +50,17 @@ private:
         int color_idx;
         std::string class_name;
 
-        int height = instance_segmentation_msg->frame.height;
-        int width = instance_segmentation_msg->frame.width;
+        int height = instance_segmentation_msg->frame.frame.height;
+        int width = instance_segmentation_msg->frame.frame.width;
 
-        cv::Mat frame(height, width, CV_8UC3, instance_segmentation_msg->frame.data.data());
+        cv::Mat frame(height, width, CV_8UC3, instance_segmentation_msg->frame.frame.data.data());
 
-        for (size_t i = 0; i < instance_segmentation_msg->boxes.size(); i++)
+        for (size_t i = 0; i < instance_segmentation_msg->segmentation.boxes.size(); i++)
         {
-            class_name = instance_segmentation_msg->classes[i];
-            score = instance_segmentation_msg->scores[i] * 100;
+            class_name = instance_segmentation_msg->segmentation.classes[i];
+            score = instance_segmentation_msg->segmentation.scores[i] * 100;
             color_idx = i % im_colors.size();
-            box = instance_segmentation_msg->boxes[i];
+            box = instance_segmentation_msg->segmentation.boxes[i];
             bounding_boxes.push_back(
                 BoundingBox(box.xmin, box.ymin, box.xmax, box.ymax, class_name, score, im_colors[color_idx]));
 
@@ -69,10 +69,10 @@ private:
             {
                 // Apply mask
                 cv::Mat mask(
-                    instance_segmentation_msg->masks[i].dimension[0],
-                    instance_segmentation_msg->masks[i].dimension[1],
+                    instance_segmentation_msg->segmentation.masks[i].dimension[0],
+                    instance_segmentation_msg->segmentation.masks[i].dimension[1],
                     CV_8UC1,
-                    instance_segmentation_msg->masks[i].data.data());
+                    instance_segmentation_msg->segmentation.masks[i].data.data());
                 cv::resize(mask, mask, cv::Size(width, height));
                 cv::cvtColor(mask, mask, cv::COLOR_GRAY2BGR);
                 cv::Scalar cv_color = cv::Scalar(
@@ -85,7 +85,7 @@ private:
         }
         // Convert from BGR to RGB
         cv::cvtColor(frame, frame, cv::COLOR_BGR2RGB);
-        return instance_segmentation_msg->frame;
+        return instance_segmentation_msg->frame.frame;
     }
 
     /// ImGui color definitions
@@ -115,7 +115,7 @@ public:
     {
         using MsgImageSharedPtr = sensor_msgs::msg::Image::SharedPtr;
         using RosImageSubscriberData = RosSubscriberData<sensor_msgs::msg::Image, sensor_msgs::msg::Image::SharedPtr>;
-        using RosSegmentationSubscriberData = RosSubscriberData<SegmentationMsg, SegmentationMsg::SharedPtr>;
+        using RosSegmentationSubscriberData = RosSubscriberData<FrameSegmentationMsg, FrameSegmentationMsg::SharedPtr>;
 
         gui_node_ptr = std::make_shared<GuiNode>(options, "gui_node");
 
@@ -124,7 +124,7 @@ public:
             std::make_shared<RosSegmentationSubscriberData>(
                 gui_node_ptr,
                 "output_segmentations",
-                [](const SegmentationMsg::SharedPtr msg) -> SegmentationMsg::SharedPtr { return msg; });
+                [](const FrameSegmentationMsg::SharedPtr msg) -> FrameSegmentationMsg::SharedPtr { return msg; });
         gui_node_ptr->addRosData("output_subscriber", subscriber_instance_segmentation);
 
         std::shared_ptr<DetectionWidget> instance_segmentation_widget = std::make_shared<DetectionWidget>(
@@ -140,7 +140,7 @@ public:
             {
                 std::shared_ptr<RosSegmentationSubscriberData> subscriber_instance_segmentation =
                     gui_node_ptr->getRosData("output_subscriber")->as<RosSegmentationSubscriberData>();
-                SegmentationMsg::SharedPtr instance_segmentation_msg = subscriber_instance_segmentation->getData();
+                FrameSegmentationMsg::SharedPtr instance_segmentation_msg = subscriber_instance_segmentation->getData();
 
                 msg = prep_display(instance_segmentation_msg, boxes, filterclass, threshold);
             });
