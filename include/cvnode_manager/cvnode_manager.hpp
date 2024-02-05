@@ -12,9 +12,9 @@
 #include <string>
 
 #include <kenning_computer_vision_msgs/action/segmentation_action.hpp>
+#include <kenning_computer_vision_msgs/msg/frame_segmentation_msg.hpp>
 #include <kenning_computer_vision_msgs/msg/segmentation_msg.hpp>
-#include <kenning_computer_vision_msgs/msg/video_msg.hpp>
-#include <kenning_computer_vision_msgs/msg/video_segmentation_msg.hpp>
+#include <kenning_computer_vision_msgs/msg/video_frame_msg.hpp>
 #include <kenning_computer_vision_msgs/srv/manage_cv_node.hpp>
 #include <kenning_computer_vision_msgs/srv/segment_cv_node_srv.hpp>
 
@@ -24,9 +24,9 @@ namespace cvnode_manager
 using ManageCVNode = kenning_computer_vision_msgs::srv::ManageCVNode;
 using SegmentCVNodeSrv = kenning_computer_vision_msgs::srv::SegmentCVNodeSrv;
 using SegmentationMsg = kenning_computer_vision_msgs::msg::SegmentationMsg;
+using FrameSegmentationMsg = kenning_computer_vision_msgs::msg::FrameSegmentationMsg;
 using SegmentationAction = kenning_computer_vision_msgs::action::SegmentationAction;
-using VideoMsg = kenning_computer_vision_msgs::msg::VideoMsg;
-using VideoSegmentationMsg = kenning_computer_vision_msgs::msg::VideoSegmentationMsg;
+using VideoFrameMsg = kenning_computer_vision_msgs::msg::VideoFrameMsg;
 
 using Trigger = std_srvs::srv::Trigger;
 
@@ -224,7 +224,7 @@ private:
     /// Publisher to publish input data to GUI
     rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr gui_input_publisher;
     /// Publisher to publish output data to GUI
-    rclcpp::Publisher<SegmentationMsg>::SharedPtr gui_output_publisher;
+    rclcpp::Publisher<FrameSegmentationMsg>::SharedPtr gui_output_publisher;
 
     /// Condition variable for DataProvider to wait for CVNode to be initialized
     std::condition_variable cvnode_wait_cv;
@@ -232,12 +232,13 @@ private:
     bool dataprovider_initialized = false; ///< Flag indicating whether the DataProvider is initialized
     CVNode cv_node = CVNode();             ///< Registered CVNode-like node used for inference
 
-    uint32_t current_request_id = 0; ///< ID of the current inference request
+    uint64_t current_request_id = 0; ///< ID of the current inference request
+    uint64_t current_frame_id = 0;   ///< ID of the current processed frame
     ///< Flag indicating whether the CVNode-like node is processing a request
     bool processing_request = false;
     /// Inference request for registered CVNode-like node
-    std::vector<VideoMsg> cvnode_request_data = std::vector<VideoMsg>();
-    std::vector<VideoSegmentationMsg> cvnode_response_data = std::vector<VideoSegmentationMsg>();
+    std::vector<VideoFrameMsg> cvnode_request_data = std::vector<VideoFrameMsg>();
+    std::vector<SegmentationMsg> cvnode_response_data = std::vector<SegmentationMsg>();
     SegmentCVNodeSrv::Request::SharedPtr cvnode_request = std::make_shared<SegmentCVNodeSrv::Request>();
     /// Inference response from registered CVNode-like node
     SegmentCVNodeSrv::Response::SharedPtr cvnode_response = std::make_shared<SegmentCVNodeSrv::Response>();

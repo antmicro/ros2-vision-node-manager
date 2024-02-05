@@ -67,29 +67,33 @@ CVNodeManager::CVNodeManager(const rclcpp::NodeOptions &options) : Node("cvnode_
 
     // Publishers for input and output data
     gui_input_publisher = create_publisher<sensor_msgs::msg::Image>("input_frame", 1);
-    gui_output_publisher = create_publisher<SegmentationMsg>("output_segmentations", 1);
+    gui_output_publisher = create_publisher<FrameSegmentationMsg>("output_segmentations", 1);
 
     // Real world timer which is manually triggered
     real_world_timer = create_wall_timer(
         std::chrono::milliseconds(get_parameter("inference_timeout_ms").as_int()),
         [this]()
         {
+            // Stop the timer
             real_world_timer->cancel();
-            for (auto &output : cvnode_response->output)
-            {
-                if (get_parameter("publish_visualizations").as_bool())
-                {
-                    gui_output_publisher->publish(output);
-                }
-                cvnode_response_data.back().data.push_back(output);
-            }
 
+            if (get_parameter("publish_visualizations").as_bool())
+            {
+                FrameSegmentationMsg frame_segmentation_msg = FrameSegmentationMsg();
+                frame_segmentation_msg.frame = cvnode_request_data.at(current_frame_id - 1);
+                frame_segmentation_msg.segmentation = cvnode_response->segmentation;
+                gui_output_publisher->publish(frame_segmentation_msg);
+            }
+            cvnode_response_data.push_back(cvnode_response->segmentation);
+
+            // If there is no input data, publish the output
             if (!is_input_data_available())
             {
                 publish_data();
                 return;
             }
 
+            // Continue the inference
             if (get_parameter("scenario").as_string() == "real_world_first")
             {
                 execute_real_world_first_inference_scenario();
@@ -98,7 +102,6 @@ CVNodeManager::CVNodeManager(const rclcpp::NodeOptions &options) : Node("cvnode_
             {
                 execute_real_world_last_inference_scenario();
             }
-
             real_world_timer->reset();
         });
     real_world_timer->cancel();
@@ -133,8 +136,7 @@ void CVNodeManager::handle_test_process_start_processing(
     const std::shared_ptr<rclcpp_action::ServerGoalHandle<SegmentationAction>> goal_handle)
 {
     std::string scenario = get_parameter("scenario").as_string();
-    cvnode_response_data.clear();
-    cvnode_response_data.push_back(VideoSegmentationMsg());
+    current_frame_id = 0;
     request_handle = goal_handle;
     if (scenario == "synthetic")
     {
@@ -244,25 +246,17 @@ void CVNodeManager::upload_measurements(
         });
 }
 
-bool CVNodeManager::is_input_data_available()
-{
-    if (!cvnode_request_data.empty())
-    {
-        if (!cvnode_request_data.back().frames.empty())
-        {
-            return true;
-        }
-    }
-    return false;
-}
+bool CVNodeManager::is_input_data_available() { return !(current_frame_id >= cvnode_request_data.size()); }
 
 void CVNodeManager::publish_data()
 {
     auto result = std::make_shared<SegmentationAction::Result>();
     result->success = true;
-    result->output = cvnode_response_data;
+    result->frames = cvnode_request_data;
+    result->segmentations = cvnode_response_data;
     request_handle->succeed(result);
     cvnode_response_data.clear();
+    cvnode_request_data.clear();
 }
 
 void CVNodeManager::abort_request(const std::string &message)
@@ -276,18 +270,13 @@ void CVNodeManager::abort_request(const std::string &message)
 
 void CVNodeManager::prepare_cvnode_request()
 {
-    cvnode_request->input.clear();
-    if (cvnode_request_data.front().frames.empty())
-    {
-        cvnode_request_data.erase(cvnode_request_data.begin());
-        cvnode_response_data.push_back(VideoSegmentationMsg());
-    }
-    cvnode_request->input.push_back(cvnode_request_data.front().frames.front());
-    cvnode_request_data.front().frames.erase(cvnode_request_data.front().frames.begin());
+    // Reset request
+    cvnode_request->input = cvnode_request_data.at(current_frame_id);
     if (get_parameter("publish_visualizations").as_bool())
     {
-        gui_input_publisher->publish(cvnode_request->input.front());
+        gui_input_publisher->publish(cvnode_request->input.frame);
     }
+    current_frame_id++;
 }
 
 void CVNodeManager::execute_synthetic_inference_scenario()
@@ -319,14 +308,14 @@ void CVNodeManager::execute_synthetic_inference_scenario()
             measurements.at("target_inference_step_timestamp")
                 .push_back(duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count() / 1000.0);
 
-            for (auto &output : cvnode_response->output)
+            if (get_parameter("publish_visualizations").as_bool())
             {
-                if (get_parameter("publish_visualizations").as_bool())
-                {
-                    gui_output_publisher->publish(output);
-                }
-                cvnode_response_data.back().data.push_back(output);
+                FrameSegmentationMsg frame_segmentation_msg = FrameSegmentationMsg();
+                frame_segmentation_msg.frame = cvnode_request_data.at(current_frame_id - 1);
+                frame_segmentation_msg.segmentation = cvnode_response->segmentation;
+                gui_output_publisher->publish(frame_segmentation_msg);
             }
+            cvnode_response_data.push_back(cvnode_response->segmentation);
 
             if (!is_input_data_available())
             {
